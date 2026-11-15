@@ -16,9 +16,19 @@ SOURCE_FILES = {
 
 
 def _read_csv(path: Path) -> pd.DataFrame:
-    if not path.exists():
-        raise FileNotFoundError(f"Missing required data file: {path}")
-    return pd.read_csv(path, low_memory=False)
+    """Read a source CSV, accepting either plain CSV or gzip-compressed CSV."""
+    candidates = [path]
+    if path.suffix == ".gz":
+        candidates.append(path.with_suffix(""))  # e.g. ball_by_ball.csv
+    elif path.suffix == ".csv":
+        candidates.append(path.with_suffix(path.suffix + ".gz"))  # e.g. matches.csv.gz
+
+    for candidate in candidates:
+        if candidate.exists():
+            return pd.read_csv(candidate, low_memory=False)
+
+    tried = ", ".join(str(p) for p in candidates)
+    raise FileNotFoundError(f"Missing required data file. Tried: {tried}")
 
 
 def load_source_tables(data_dir: str | Path) -> dict[str, pd.DataFrame]:
