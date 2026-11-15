@@ -616,11 +616,12 @@ def build_rr_intelligence(source: str | Path, output_dir: str | Path,
     with paths["report"].open("a", encoding="utf-8") as report:
         report.write("\n\n## PI / XGBoost phase selector\n\n")
         report.write(
-            "The phase selector uses the repository's exact PI weights and the saved synthetic-pressure "
-            "XGBoost model. The combined player decision score is 80% PI performance percentile and "
-            "20% XGBoost performance percentile, renormalised when a model has insufficient sample. "
-            "XGBoost learns synthetic teacher labels and is therefore a low-weight supporting signal, "
-            "not empirical psychological-pressure ground truth.\n\n"
+            "The phase selector uses a task-specific PI: baseline in Powerplay, momentum-heavy in the "
+            "Middle overs, and RRR-situation-heavy at the Death. Bowlers are scored on the inverse "
+            "defending-side pressure state. The combined player decision score is 80% PI performance "
+            "percentile and 20% synthetic-trained XGBoost percentile, renormalised when a model has "
+            "insufficient sample. XGBoost learns synthetic teacher labels and is not empirical "
+            "psychological-pressure ground truth.\n\n"
         )
         report.write(f"## RR {xi_season} season frequent XI\n\n")
         report.write(
