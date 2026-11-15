@@ -110,23 +110,27 @@ def _player_metrics(frame: pd.DataFrame, role: str, pressure_col: str) -> pd.Dat
         result["dot_rate"] = 100 * result["dots"] / result["deliveries"].replace(0, np.nan)
         return result
 
-    if "is_legal_ball" in d:
-        d = d.loc[_as_bool(d["is_legal_ball"])].copy()
     if d.empty:
         return pd.DataFrame()
     d["player_key"] = _key(d, "bowler_id", "bowler")
     d["player_name"] = d["bowler"].fillna("Unknown")
+    d["is_legal_metric_ball"] = (
+        _as_bool(d["is_legal_ball"]) if "is_legal_ball" in d
+        else pd.Series(True, index=d.index)
+    )
+    # All wides/no-balls are included in runs conceded, but only legal balls
+    # count toward overs, wickets-per-ball and dot-ball-rate denominators.
     d["runs_conceded"] = (
         pd.to_numeric(d["runs_batter"], errors="coerce").fillna(0)
         + pd.to_numeric(d["wides"], errors="coerce").fillna(0)
         + pd.to_numeric(d["no_balls"], errors="coerce").fillna(0)
     )
     d["credited_wicket"] = _as_bool(d["bowler_credited_wicket"]) if "bowler_credited_wicket" in d else False
-    d["dot"] = d["runs_conceded"].eq(0)
+    d["legal_dot"] = d["runs_conceded"].eq(0) & d["is_legal_metric_ball"]
     result = d.groupby(["player_key", "player_name"], as_index=False).agg(
-        deliveries=("match_id", "size"), matches=("match_id", "nunique"),
+        deliveries=("is_legal_metric_ball", "sum"), matches=("match_id", "nunique"),
         runs_conceded=("runs_conceded", "sum"), wickets=("credited_wicket", "sum"),
-        dots=("dot", "sum"), mean_pressure=(pressure_col, "mean"),
+        dots=("legal_dot", "sum"), mean_pressure=(pressure_col, "mean"),
     )
     result["economy"] = 6 * result["runs_conceded"] / result["deliveries"].replace(0, np.nan)
     result["wickets_per_100"] = 100 * result["wickets"] / result["deliveries"].replace(0, np.nan)
