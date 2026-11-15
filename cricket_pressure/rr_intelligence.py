@@ -635,6 +635,25 @@ def build_rr_intelligence(source: str | Path, output_dir: str | Path,
             ]].to_markdown(index=False)
             if not frequent_xi_phase_options.empty else "No phase options were available."
         )
+        report.write("\n\n## RR XI pressure weakness review and role-matched replacements\n\n")
+        report.write(
+            xi_review[[
+                "historical_xi_rank", "player_name", "role", "phase",
+                "pi_type", "team_need_score", "decision_score", "weakness_score",
+                "weakness_status", "weakness_reason",
+            ]].to_markdown(index=False)
+            if not xi_review.empty else "No XI pressure review rows were available."
+        )
+        report.write("\n\n")
+        report.write(
+            replacements[[
+                "replaces_player", "weak_role", "weak_phase", "replacement_rank",
+                "player_name", "candidate_score", "decision_score", "pi_type",
+                "pi_pressure_deliveries", "pi_pressure_matches",
+                "candidate_sample_status", "availability_status",
+            ]].to_markdown(index=False)
+            if not replacements.empty else "No phase-matched replacement cleared the current sample gates."
+        )
         report.write("\n\n")
     print(f"IPL matches: {all_ipl['match_id'].nunique():,} | deliveries: {len(all_ipl):,}")
     print(f"RR matches: {len(rr_matches):,} | RR deliveries: {len(rr_deliveries):,}")
