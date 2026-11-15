@@ -398,11 +398,35 @@ def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int =
     match_disagreements, delivery_disagreements = _build_match_disagreements(real)
     innings_validation, score_audit = _build_score_audit(states)
 
-    # Independent historical outcome benchmark: actual chase-side win/loss labels,
-    # grouped chronologically by match. This is not trained on synthetic pressure labels.
+    # Historical outcome models: unweighted baseline plus three recency half-lives.
+    # The chronological held-out period remains identically weighted for fair comparison.
+    outcome_experiments = {}
+    for half_life in (None, 365, 540, 730):
+        outcome_experiments[half_life] = train_historical_win_probability(
+            pi_scored, random_state=seed, recency_half_life_days=half_life
+        )
+    # 540 days is the provisional dashboard default, not a pre-declared winner.
     outcome_model, outcome_metrics, outcome_predictions, outcome_calibration, outcome_importance = (
-        train_historical_win_probability(pi_scored, random_state=seed)
+        outcome_experiments[540]
     )
+    outcome_comparison = pd.DataFrame([
+        {
+            "half_life": "Unweighted" if half_life is None else f"{half_life} days",
+            "half_life_days": 0 if half_life is None else half_life,
+            "train_matches": result[1]["train_matches"],
+            "test_matches": result[1]["test_matches"],
+            "accuracy_match_weighted": result[1]["accuracy_match_weighted"],
+            "roc_auc_match_weighted": result[1]["roc_auc_match_weighted"],
+            "brier_score_match_weighted": result[1]["brier_score_match_weighted"],
+            "baseline_brier_score_match_weighted": result[1]["baseline_brier_score_match_weighted"],
+            "log_loss_match_weighted": result[1]["log_loss_match_weighted"],
+            "cutoff_date_utc": result[1]["cutoff_date_utc"],
+            "recency_reference_date_utc": result[1]["recency_reference_date_utc"],
+        }
+        for half_life, result in outcome_experiments.items()
+    ])
+    outcome_calibration = outcome_calibration.copy()
+    outcome_calibration["training_half_life"] = "540 days"
     match_summary = real.groupby(["match_format", "season"], dropna=False).agg(
         pressure_deliveries=("match_id", "size"),
         matches=("match_id", "nunique"),
@@ -444,6 +468,7 @@ def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int =
     score_audit.to_csv(dirs["outputs"] / "score_reconciliation_audit.csv", index=False)
     outcome_predictions.to_csv(dirs["processed"] / "historical_win_probability_predictions.csv.gz", index=False, compression="gzip")
     outcome_calibration.to_csv(dirs["outputs"] / "historical_win_probability_calibration.csv", index=False)
+    outcome_comparison.to_csv(dirs["outputs"] / "historical_win_probability_recency_comparison.csv", index=False)
     outcome_importance.to_csv(dirs["outputs"] / "historical_win_probability_feature_importance.csv", index=False)
     np.savetxt(dirs["metrics"] / "synthetic_xgb_confusion_matrix.csv",
                np.asarray(synthetic_metrics["confusion_matrix"], dtype=int), delimiter=",", fmt="%d")
@@ -456,7 +481,7 @@ def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int =
     with open(dirs["metrics"] / "synthetic_pi_classification_report.json", "w", encoding="utf-8") as f:
         json.dump(_json_safe(synthetic_metrics["pi_classification_report"]), f, indent=2)
     model.save_model(dirs["models"] / "synthetic_pressure_xgb.json")
-    outcome_model.save_model(dirs["models"] / "historical_win_probability_xgb.json")
+    outcome_model.save_model(dirs["models"] / "historical_win_probability_xgb_540d.json")
     _plot_outputs(synthetic_test, synthetic_metrics, extras["importance"], real, sensitivity, dirs)
     _plot_extra_diagnostics(outcome_calibration, match_disagreements, player_rankings, dirs)
 
@@ -492,6 +517,7 @@ def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int =
         "player_top10": player_top10, "scenario_lab": scenario_lab,
         "match_disagreements": match_disagreements, "delivery_disagreements": delivery_disagreements,
         "innings_validation": innings_validation, "score_audit": score_audit,
-        "outcome_metrics": outcome_metrics, "outcome_predictions": outcome_predictions,
-        "outcome_calibration": outcome_calibration, "summary": summary,
+        "outcome_metrics": outcome_metrics, "outcome_comparison": outcome_comparison,
+        "outcome_predictions": outcome_predictions, "outcome_calibration": outcome_calibration,
+        "summary": summary,
     }
