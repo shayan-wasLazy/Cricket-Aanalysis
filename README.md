@@ -376,11 +376,16 @@ existing pressure ranking methods. Default method weights remain:
 | PI stakes-heavy | 15% |
 | Synthetic-trained XGBoost | 5% |
 
-A minimum of 100 pressure deliveries, 10 pressure matches, recent activity within
-365 days, and support from at least three methods are the default dashboard gates.
-The user can change each gate and the recency horizon. RRF is a ranking-consensus
-mechanism: it rewards players who rank consistently across model variants rather
-than treating the raw scores from different methods as directly interchangeable.
+The final-submission tab defaults to 50 pressure deliveries, 5 pressure matches,
+recent activity within 365 days, and support from at least three methods. A
+100-delivery prior shrinks small samples toward the role-wide rate, and all four
+PI variants plus XGBoost must be considered before the RRF support gate is applied.
+The thresholds and recency horizon remain adjustable. The lower entry gate is
+used because the saved 2022–2026 data had only 12 batters passing the stricter
+100-delivery / 10-match gate; 50 / 5 produced a wider eligible set while retaining
+shrinkage and cross-method agreement. RRF is a ranking-consensus mechanism: it
+rewards players who rank consistently across model variants rather than treating
+raw scores from different methods as directly interchangeable.
 
 The player scoring logic is role-specific:
 
