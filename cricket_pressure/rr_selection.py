@@ -124,12 +124,15 @@ def _key(frame: pd.DataFrame, id_col: str, name_col: str) -> pd.Series:
 def build_frequent_xi(source: str | Path, rr_deliveries: pd.DataFrame,
                        start_year: int, end_year: int,
                        rr_team: str = "Rajasthan Royals") -> pd.DataFrame:
-    """Return the historical 11 most frequently listed RR playing-XI members."""
+    """Return the 11 most frequently listed RR playing-XI members in the requested season."""
     roster = _read_lineups(source, start_year, end_year, rr_team)
+    rr_season = rr_deliveries.loc[
+        pd.to_numeric(rr_deliveries["season"], errors="coerce").between(start_year, end_year)
+    ].copy()
     if roster.empty:
-        # Some historical source files omit info.players; infer participants as a documented fallback.
-        rows = rr_deliveries.loc[
-            rr_deliveries["batting_team"].eq(rr_team) | rr_deliveries["bowling_team"].eq(rr_team)
+        # Some source files omit info.players; infer participants only from the requested XI season.
+        rows = rr_season.loc[
+            rr_season["batting_team"].eq(rr_team) | rr_season["bowling_team"].eq(rr_team)
         ]
         batting = rows.loc[rows["batting_team"].eq(rr_team),
                            ["match_id", "match_date", "season", "batter", "batter_id"]].rename(
@@ -147,8 +150,9 @@ def build_frequent_xi(source: str | Path, rr_deliveries: pd.DataFrame,
         first_season=("season", "min"), last_season=("season", "max"),
         first_appearance=("match_date", "min"), last_appearance=("match_date", "max"),
     )
-    rr = rr_deliveries.loc[
-        rr_deliveries["batting_team"].eq(rr_team) | rr_deliveries["bowling_team"].eq(rr_team)
+    # The displayed XI's role statistics must describe the same season as its XI appearances.
+    rr = rr_season.loc[
+        rr_season["batting_team"].eq(rr_team) | rr_season["bowling_team"].eq(rr_team)
     ].copy()
     batting = rr.loc[rr["batting_team"].eq(rr_team)].copy()
     batting["batter_key"] = _key(batting, "batter_id", "batter")
@@ -191,7 +195,8 @@ def build_frequent_xi(source: str | Path, rr_deliveries: pd.DataFrame,
         ascending=[False, False, False, False],
     ).head(11).reset_index(drop=True)
     result.insert(0, "historical_xi_rank", np.arange(1, len(result) + 1))
-    result["xi_scope"] = f"Most frequent RR playing-XI listings, IPL {start_year}–{end_year}"
+    result["xi_season"] = int(start_year) if start_year == end_year else f"{start_year}–{end_year}"
+    result["xi_scope"] = f"Most frequent RR playing-XI listings, IPL {start_year}" if start_year == end_year else f"Most frequent RR playing-XI listings, IPL {start_year}–{end_year}"
     return result
 
 

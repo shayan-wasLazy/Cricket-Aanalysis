@@ -300,7 +300,7 @@ The ingestion script uses Cricsheet's IPL JSON archive:
 
 Download and build the local report for IPL seasons 2022–2026:
 
-python scripts/build_rr_intelligence.py --download --start-year 2022 --end-year 2026
+python scripts/build_rr_intelligence.py --download --start-year 2022 --end-year 2026 --xi-season 2026
 
 The archive is saved to dataset/rr_intelligence/ipl_json.zip. It is local-only: dataset files are ignored by Git. Generated outputs are written under outputs/rr_intelligence/, which is also ignored. Do not upload the archive or generated match data unless the applicable licence and competition terms permit it.
 
@@ -347,7 +347,7 @@ The RR build loads the saved synthetic_pressure_xgb.json model and applies the r
 
 The PI/XGB phase selector & RR XI tab provides:
 - A phase selector for Powerplay, Middle and Death, for batters and bowlers, across all IPL players or the historical RR frequent XI.
-- The 11 players most frequently listed in RR playing XIs for the selected seasons.
+- The 11 players most frequently listed in RR playing XIs in IPL 2026 only.
 - Six phase options for each frequent-XI player: batting and bowling in Powerplay, Middle and Death.
 
 New outputs:
@@ -355,4 +355,4 @@ New outputs:
 - outputs/rr_intelligence/rr_frequent_xi.csv
 - outputs/rr_intelligence/rr_frequent_xi_phase_options.csv
 
-Important: XGBoost is trained on synthetic teacher labels, so it is a supporting signal and not empirically validated psychological-pressure ground truth. The frequent XI is a historical 2022–2026 usage summary, not the official 2027 squad. Confirm current retention and auction availability independently.
+Important: XGBoost is trained on synthetic teacher labels, so it is a supporting signal and not empirically validated psychological-pressure ground truth. The frequent XI membership and appearance counts are based on IPL 2026 only; the player phase-performance scores use the 2022–2026 IPL sample. This is not the official 2027 retained squad. Confirm current retention and auction availability independently.

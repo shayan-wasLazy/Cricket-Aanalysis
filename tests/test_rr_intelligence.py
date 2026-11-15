@@ -35,10 +35,13 @@ def _innings(team, batter, bowler, runs_each=1, wickets_first=0, make_wide=False
     return {"team": team, "overs": overs}
 
 
-def _match(rr_match=True):
+def _match(rr_match=True, year=2026):
     if rr_match:
         teams = ["Chennai Super Kings", "Rajasthan Royals"]
-        bat1, bowl1, bat2, bowl2 = "CSK Batter", "RR Bowler", "RR Batter", "CSK Bowler"
+        if year == 2026:
+            bat1, bowl1, bat2, bowl2 = "CSK Batter", "RR Bowler", "RR Batter", "CSK Bowler"
+        else:
+            bat1, bowl1, bat2, bowl2 = "CSK Batter Old", "RR Bowler Old", "RR Batter Old", "CSK Bowler Old"
         first_runs, second_runs, wickets_first = 2, 0, 6
         filename = "rr_match.json"
     else:
@@ -48,7 +51,7 @@ def _match(rr_match=True):
         filename = "other_match.json"
     payload = {
         "info": {
-            "dates": ["2022-04-01"], "season": "2022", "overs": 20,
+            "dates": [f"{year}-04-01"], "season": str(year), "overs": 20,
             "event": {"name": "Indian Premier League"}, "teams": teams,
             "venue": "Test Ground", "outcome": {"winner": teams[0]},
             "players": {teams[0]: [bat1, bowl2], teams[1]: [bat2, bowl1]},
@@ -86,9 +89,9 @@ class DummyPressureXGB:
 def test_build_outputs_separate_rr_diagnostics_from_all_ipl_candidate_pool(tmp_path):
     archive = tmp_path / "ipl_json.zip"
     with zipfile.ZipFile(archive, "w") as zf:
-        for rr_match in [True, False]:
-            name, payload = _match(rr_match)
-            zf.writestr(name, json.dumps(payload))
+        for rr_match, year in [(True, 2026), (False, 2026), (True, 2022)]:
+            name, payload = _match(rr_match, year=year)
+            zf.writestr(f"{year}_{name}", json.dumps(payload))
     paths = build_rr_intelligence(archive, tmp_path / "out", 2022, 2026, xgb_model=DummyPressureXGB())
 
     matches = pd.read_csv(paths["rr_matches"])
@@ -98,8 +101,8 @@ def test_build_outputs_separate_rr_diagnostics_from_all_ipl_candidate_pool(tmp_p
     fit = pd.read_csv(paths["player_fit_shortlist"])
 
     assert len(matches) == 1
-    assert all_deliveries["match_id"].nunique() == 2
-    assert rr_deliveries["match_id"].nunique() == 1
+    assert all_deliveries["match_id"].nunique() == 3
+    assert rr_deliveries["match_id"].nunique() == 2
     assert not pressure.empty
     assert pressure["pressure_index"].min() >= 60
     assert {"Batter", "Bowler"}.issubset(set(fit["role"]))
@@ -107,6 +110,10 @@ def test_build_outputs_separate_rr_diagnostics_from_all_ipl_candidate_pool(tmp_p
     frequent_xi = pd.read_csv(paths["frequent_xi"])
     phase_rankings = pd.read_csv(paths["phase_player_rankings"])
     phase_options = pd.read_csv(paths["frequent_xi_phase_options"])
-    assert frequent_xi["player_name"].tolist() == ["RR Batter", "RR Bowler"] or set(frequent_xi["player_name"]) == {"RR Batter", "RR Bowler"}
+    assert set(frequent_xi["player_name"]) == {"RR Batter", "RR Bowler"}
+    assert set(frequent_xi["first_season"]) == {2026}
+    assert set(frequent_xi["last_season"]) == {2026}
+    assert set(frequent_xi["appearances"]) == {1}
+    assert not frequent_xi["player_name"].str.contains("Old").any()
     assert {"pi_performance_score", "xgb_performance_score", "decision_score"}.issubset(phase_rankings.columns)
     assert len(phase_options) == len(frequent_xi) * 6

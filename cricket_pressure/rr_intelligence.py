@@ -518,10 +518,15 @@ def _write_report(path: Path, matches: pd.DataFrame, rr_deliveries: pd.DataFrame
 def build_rr_intelligence(source: str | Path, output_dir: str | Path,
                           start_year: int = 2022, end_year: int = 2026,
                           rr_team: str = "Rajasthan Royals",
-                          xgb_model: Any | None = None) -> dict[str, Path]:
+                          xgb_model: Any | None = None,
+                          xi_season: int = 2026) -> dict[str, Path]:
     """Generate RR-only match outputs and all-IPL candidate-fit rankings."""
     if start_year > end_year:
         raise ValueError("start_year must be <= end_year")
+    if not start_year <= xi_season <= end_year:
+        raise ValueError(
+            f"xi_season ({xi_season}) must fall within the loaded IPL range {start_year}–{end_year}."
+        )
     frames = []
     source_path = Path(source)
     for source_name, payload in _iter_json_payloads(source):
@@ -549,8 +554,10 @@ def build_rr_intelligence(source: str | Path, output_dir: str | Path,
     if not rr_ids:
         raise ValueError(f"No {rr_team} matches found in the selected seasons.")
     rr_deliveries = all_ipl.loc[all_ipl["match_id"].isin(rr_ids)].copy()
+    # Only the requested season determines XI membership and XI appearance counts.
+    # PI/XGB phase rankings below still use the full selected IPL range for sample depth.
     frequent_xi = build_frequent_xi(
-        source, rr_deliveries, start_year, end_year, rr_team
+        source, rr_deliveries, xi_season, xi_season, rr_team
     )
     phase_rankings = build_phase_player_rankings(all_ipl)
     frequent_xi_phase_options = build_frequent_xi_phase_options(
@@ -602,7 +609,7 @@ def build_rr_intelligence(source: str | Path, output_dir: str | Path,
             "XGBoost learns synthetic teacher labels and is therefore a low-weight supporting signal, "
             "not empirical psychological-pressure ground truth.\n\n"
         )
-        report.write("## Historical RR frequent XI\n\n")
+        report.write(f"## RR {xi_season} season frequent XI\n\n")
         report.write(
             frequent_xi[["historical_xi_rank", "player_name", "appearances", "usage_profile"]]
             .to_markdown(index=False) if not frequent_xi.empty else "Playing-XI lists were unavailable."

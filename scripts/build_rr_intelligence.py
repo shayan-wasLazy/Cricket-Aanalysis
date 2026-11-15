@@ -22,6 +22,8 @@ def main() -> None:
     parser.add_argument("--start-year", type=int, default=2022)
     parser.add_argument("--end-year", type=int, default=2026)
     parser.add_argument("--team", default="Rajasthan Royals")
+    parser.add_argument("--xi-season", type=int, default=2026,
+                        help="Season used exclusively to define the RR frequent XI (default: 2026).")
     parser.add_argument("--model-path", type=Path, default=ROOT / "models" / "synthetic_pressure_xgb.json",
                         help="Path to the XGBoost synthetic-pressure model saved by python run_analysis.py.")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "outputs" / "rr_intelligence")
@@ -41,7 +43,7 @@ def main() -> None:
     build_rr_intelligence(
         source=source, output_dir=args.output_dir,
         start_year=args.start_year, end_year=args.end_year,
-        rr_team=args.team, xgb_model=model,
+        rr_team=args.team, xgb_model=model, xi_season=args.xi_season,
     )
 
 

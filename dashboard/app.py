@@ -816,7 +816,7 @@ with tabs[10]:
     frequent_xi = data["rr_frequent_xi"]
     xi_options = data["rr_frequent_xi_options"]
 
-    selector_tab, xi_tab = st.tabs(["Phase-wise player options", "RR historical frequent XI"])
+    selector_tab, xi_tab = st.tabs(["Phase-wise player options", "RR 2026 frequent XI"])
 
     with selector_tab:
         if phase_rankings.empty:
@@ -831,7 +831,7 @@ with tabs[10]:
             c3, c4, c5 = st.columns(3)
             with c3:
                 selection_pool = st.selectbox(
-                    "Player pool", ["All IPL players", "RR historical frequent XI only"], key="pi_xgb_pool"
+                    "Player pool", ["All IPL players", "RR 2026 season XI only"], key="pi_xgb_pool"
                 )
             with c4:
                 min_pressure_balls = st.number_input(
@@ -848,7 +848,7 @@ with tabs[10]:
                 phase_rankings["role"].eq(selection_role)
                 & phase_rankings["phase"].eq(selection_phase)
             ].copy()
-            if selection_pool == "RR historical frequent XI only":
+            if selection_pool == "RR 2026 season XI only":
                 xi_ids = set(frequent_xi["player_id"].astype(str)) if not frequent_xi.empty else set()
                 candidates = candidates.loc[candidates["player_key"].astype(str).isin(xi_ids)]
 
@@ -923,10 +923,11 @@ with tabs[10]:
             )
 
     with xi_tab:
-        st.subheader("RR historical frequent XI")
+        st.subheader("RR 2026 season frequent XI")
         st.caption(
-            "The 11 most frequently listed Rajasthan Royals playing-XI members across the selected IPL seasons. "
-            "This is a historical usage list, not a claim about the current or 2027 retained squad."
+            "XI membership is calculated exclusively from Rajasthan Royals playing-XI listings in IPL 2026. "
+            "The PI/XG phase performance scores still use the wider 2022–2026 IPL delivery sample. "
+            "This is the 2026 season XI, not a claim about the official 2027 retained squad."
         )
         if frequent_xi.empty:
             st.info("No playing-XI list was found. The pipeline falls back to observed RR batters and bowlers.")
@@ -950,7 +951,7 @@ with tabs[10]:
                 ]
                 option_cols = [c for c in option_cols if c in xi_options.columns]
                 st.dataframe(xi_options[option_cols].rename(columns={
-                    "historical_xi_rank": "XI rank", "player_name": "Player",
+                    "historical_xi_rank": "2026 XI rank", "player_name": "Player",
                     "role": "Option", "phase": "Phase", "decision_score": "PI/XGB score",
                     "decision_rank": "Phase rank", "pi_performance_score": "PI percentile",
                     "pi_pressure_deliveries": "PI pressure balls",
