@@ -77,6 +77,7 @@ def _summarise_role(
         ).astype(int)
         d["credited_wicket"] = 0
         d["delivery_unit"] = 1.0
+        d["opportunity_match_id"] = d["match_id"]
         count_col = "performance_count"
         metric_name = "runs_per_100_pressure_deliveries"
     else:
@@ -104,6 +105,7 @@ def _summarise_role(
             d["bowler_runs_conceded"].eq(0) & d["is_legal_delivery"]
         ).astype(int)
         d["delivery_unit"] = d["is_legal_delivery"].astype(float)
+        d["opportunity_match_id"] = d["match_id"].where(d["is_legal_delivery"])
         d["weighted_runs_conceded"] = d["bowler_runs_conceded"] * d["recency_weight"].astype(float)
         d["weighted_dots"] = d["bowler_dot"] * d["recency_weight"].astype(float)
         count_col = "credited_wicket"
@@ -118,7 +120,7 @@ def _summarise_role(
 
     aggregations = {
         "pressure_deliveries": ("delivery_unit", "sum"),
-        "pressure_matches": ("match_id", "nunique"),
+        "pressure_matches": ("opportunity_match_id", "nunique"),
         "raw_performance": (count_col, "sum"),
         "weighted_deliveries": ("weighted_deliveries", "sum"),
         "weighted_performance": ("weighted_performance", "sum"),
