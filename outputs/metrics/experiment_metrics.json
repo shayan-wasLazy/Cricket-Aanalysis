@@ -1,0 +1,18 @@
+{
+  "xgb_accuracy": 0.9339772727272727,
+  "xgb_macro_f1": 0.8580032930730447,
+  "pi_accuracy": 0.8560227272727273,
+  "pi_macro_f1": 0.7711309610576629,
+  "xgb_minus_pi_accuracy": 0.07795454545454539,
+  "xgb_teacher_score_mae_vs_class_midpoint": 5.2623356541495445,
+  "pi_teacher_score_mae": 4.1152368024328085,
+  "teacher_score_r2_vs_xgb_class_midpoint": 0.7993682356236698,
+  "n_train": 31200,
+  "n_test": 8800,
+  "real_state_count": 91419,
+  "real_match_count": 815,
+  "real_pi_xgb_spearman": 0.9922544352625755,
+  "real_pi_xgb_pearson": 0.9353997045233946,
+  "interpretation": "Synthetic holdout metrics measure how well XGBoost learns the deliberately generated synthetic label rule. They do not validate real-world psychological pressure. Historical PI-vs-XGBoost correlation measures agreement only.",
+  "source_data_caveat": "1,456 unresolved bye/legbye deliveries occur in the selected chase states; innings totals and chase states remain provisional until reconciled with official scorecards."
+}
