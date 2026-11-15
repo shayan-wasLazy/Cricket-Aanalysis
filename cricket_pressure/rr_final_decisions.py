@@ -302,11 +302,22 @@ def _rr_player_phase_record(rr_rows: pd.DataFrame, role: str, phase: str, rr_tea
         }).drop(columns=["runs", "dismissals", "boundaries", "dots", "runs_conceded", "wickets", "mean_pressure", "boundary_rate", "dismissals_per_100"], errors="ignore")
 
     keys = d[["player_key", "player_name"]].drop_duplicates()
-    result = keys.merge(pi, on=["player_key", "player_name"], how="left")
+
+    # A phase may contain RR appearances but no deliveries classified as high
+    # pressure by PI/XGBoost. Empty metric frames have no columns, so give them
+    # their join keys before merging; retain the XI players and mark metrics NaN.
+    join_keys = ["player_key", "player_name"]
+    for metric_frame in (pi, base, xgb):
+        if metric_frame.empty:
+            metric_frame.drop(metric_frame.index, inplace=True)
+            for key in join_keys:
+                metric_frame[key] = pd.Series(dtype=keys[key].dtype)
+
+    result = keys.merge(pi, on=join_keys, how="left")
     if not base.empty:
-        result = result.merge(base, on=["player_key", "player_name"], how="left")
+        result = result.merge(base, on=join_keys, how="left")
     if not xgb.empty:
-        result = result.merge(xgb, on=["player_key", "player_name"], how="left")
+        result = result.merge(xgb, on=join_keys, how="left")
     if not last_over.empty:
         last_cols = ["player_key", "player_name"] + [
             c for c in last_over.columns if c not in {"player_key", "player_name"}
