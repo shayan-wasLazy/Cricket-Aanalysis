@@ -506,6 +506,10 @@ def build_weighted_rrf_ensemble(
                         method_rows[[c for c in ["model_rank", "rrf_contribution", "selection_score", "pressure_uplift_per_100", "economy_per_over", "dot_rate"] if c in method_rows]].rename(columns={
                             "model_rank": f"rank_{slug}",
                             "rrf_contribution": f"contribution_{slug}",
+                            "selection_score": f"selection_score_{slug}",
+                            "pressure_uplift_per_100": f"pressure_uplift_per_100_{slug}",
+                            "economy_per_over": f"economy_per_over_{slug}",
+                            "dot_rate": f"dot_rate_{slug}",
                         }),
                         on="player_id",
                     )
