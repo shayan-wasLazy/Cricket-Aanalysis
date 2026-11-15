@@ -274,6 +274,16 @@ def build_phase_player_rankings(all_ipl: pd.DataFrame) -> pd.DataFrame:
                 ]
             if base.empty:
                 continue
+            # A registry UUID can appear with spelling variants across matches. Keep one
+            # canonical display name per player key so phase joins remain one-to-one.
+            canonical_names = base.groupby("player_key")["player_name"].agg(
+                lambda names: names.value_counts().index[0]
+            )
+            base["player_name"] = base["player_key"].map(canonical_names)
+            if role == "Batter":
+                base["batter"] = base["player_name"]
+            else:
+                base["bowler"] = base["player_name"]
             overall = base.groupby(["player_key", "player_name"], as_index=False).agg(
                 phase_deliveries=("match_id", "size"),
                 phase_matches=("match_id", "nunique"),

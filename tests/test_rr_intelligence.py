@@ -53,8 +53,8 @@ def _match(rr_match=True):
             "venue": "Test Ground", "outcome": {"winner": teams[0]},
             "players": {teams[0]: [bat1, bowl2], teams[1]: [bat2, bowl1]},
             "registry": {"people": {
-                bat1: "batter-id-1", bowl1: "bowler-id-1",
-                bat2: "batter-id-2", bowl2: "bowler-id-2",
+                name: "person-" + name.lower().replace(" ", "-")
+                for name in [bat1, bowl1, bat2, bowl2]
             }},
         },
         "innings": [
