@@ -189,6 +189,33 @@ This outcome model is an independent empirical benchmark for game-state difficul
 The synthetic confusion matrix is now saved in `outputs/metrics/experiment_metrics.json` and as `outputs/metrics/synthetic_xgb_confusion_matrix.csv`, fixing the previous dashboard display bug.
 
 
+
+### 5. Weighted Reciprocal Rank Fusion (RRF) player shortlist
+
+The ranking refresh and full analysis now generate an ensemble shortlist using weighted Reciprocal Rank Fusion. RRF aggregates the player orderings from the five available scoring methods:
+
+RRF(p) = sum over methods m of [w_m / (60 + rank_m(p))]
+
+The weights are deliberately unequal:
+
+| Scoring method | RRF weight | Rationale |
+|---|---:|---|
+| PI baseline | 35% | Main transparent, pre-declared pressure definition |
+| PI RRR-heavy | 25% | Alternative emphasising required-rate stress |
+| PI momentum-heavy | 20% | Alternative emphasising recent scoring shortfall |
+| PI stakes-heavy | 15% | Alternative emphasising match-stage importance |
+| Synthetic-trained XGBoost | 5% | Low-weight sensitivity signal because its classes come from a synthetic teacher rule, not empirical pressure labels |
+
+The four PI methods share the same underlying feature space and are sensitivity variants, not four independent experiments. Their weights are therefore not interpreted as independent votes. Synthetic XGBoost receives only 5%; the historical match-outcome model is not given a player-level vote because it predicts team chase outcomes, not an individual batter's or bowler's pressure performance.
+
+**Candidate eligibility:** each model ranking is recomputed after applying the selected minimum pressure-delivery count, minimum match count and recent-activity window. A player must appear in at least three of the five eligible model lists by default. Missing model ranks contribute zero to the RRF score; model support and total supporting weight are reported separately. This prevents a high score in only one or two methods from creating a shortlist place.
+
+The dashboard's **RRF ensemble shortlist** tab lets you change the role, sample gates, half-life, activity window, minimum model support and shortlist size. Treat the result as a candidate pool for human review—not an automatic final Top 10. RRF measures agreement between configured scoring methods, not causal clutch ability or improvement over a player's own baseline.
+
+Generated files:
+- outputs/player_rrf_ensemble.csv — RRF results for all available recency settings.
+- outputs/player_rrf_top20.csv — first 20 eligible candidates per role and recency setting.
+
 ## Pull future code updates without replacing your local dataset
 
 From your existing clone, first confirm the source CSV is ignored, then fast-forward to the latest code:
