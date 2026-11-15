@@ -281,13 +281,14 @@ def _pressure_metrics(rows: pd.DataFrame, role: str) -> pd.DataFrame:
         return pd.DataFrame()
     d["player_key"] = _key(d, "bowler_id", "bowler")
     d["is_legal_metric_ball"] = d["is_legal_ball"].fillna(False).astype(bool)
+    d["legal_match_id"] = d["match_id"].where(d["is_legal_metric_ball"])
     # Runs on wides/no-balls count against the bowler even though they do not
     # increase the legal-ball denominator. Dots are legal balls with zero runs.
     d["bowler_runs_conceded"] = d["runs_batter"] + d["wides"] + d["no_balls"]
     d["dot"] = (d["bowler_runs_conceded"].eq(0) & d["is_legal_metric_ball"]).astype(int)
     result = d.groupby(["player_key", "bowler"], as_index=False).agg(
         pressure_deliveries=("is_legal_metric_ball", "sum"),
-        pressure_matches=("match_id", "nunique"),
+        pressure_matches=("legal_match_id", "nunique"),
         pressure_runs_conceded=("bowler_runs_conceded", "sum"),
         pressure_wickets=("bowler_credited_wicket", "sum"),
         pressure_dots=("dot", "sum"),
@@ -345,9 +346,10 @@ def build_phase_player_rankings(all_ipl: pd.DataFrame) -> pd.DataFrame:
                 base["bowler"] = base["player_name"]
             if role == "Batter":
                 base["phase_delivery_unit"] = 1
+            base["phase_match_id"] = base["match_id"].where(base["phase_delivery_unit"].gt(0))
             overall = base.groupby(["player_key", "player_name"], as_index=False).agg(
                 phase_deliveries=("phase_delivery_unit", "sum"),
-                phase_matches=("match_id", "nunique"),
+                phase_matches=("phase_match_id", "nunique"),
             )
             for _, flag_col, score_col, prefix in specs:
                 subset = base.loc[
