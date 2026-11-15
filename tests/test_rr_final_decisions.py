@@ -48,9 +48,9 @@ def test_bowler_pressure_metrics_use_legal_balls_and_credited_wickets():
 
     assert result["deliveries"] == 4
     assert result["matches"] == 2
-    assert result["runs_conceded"] == 10
+    assert result["runs_conceded"] == 11
     assert result["wickets"] == 2
-    assert np.isclose(result["economy"], 15.0)
+    assert np.isclose(result["economy"], 16.5)
     assert np.isclose(result["wickets_per_100"], 50.0)
     assert np.isclose(result["dot_rate"], 25.0)
 
