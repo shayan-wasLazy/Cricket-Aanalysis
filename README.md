@@ -29,7 +29,7 @@ dataset/
 
 The loader also accepts gzip-compressed equivalents such as `ball_by_ball.csv.gz` and `matches.csv.gz`.
 
-**The dataset folder is intentionally gitignored.** Its README remains tracked, but CSVs will not be committed or pushed. Keep the source data local unless the competition terms explicitly allow redistribution. See [dataset/README.md](dataset/README.md) for exact steps and an ignore check.
+**The dataset folder is intentionally gitignored.** Its README remains tracked, but CSVs will not be committed or pushed. Earlier project bundles may already have the same six files under `data/raw/`; the loader supports that legacy location too, and it is also gitignored. Keep the source data local unless the competition terms explicitly allow redistribution. See [dataset/README.md](dataset/README.md) for exact steps and an ignore check.
 
 ## Clone and install
 
