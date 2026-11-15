@@ -118,6 +118,7 @@ def _player_metrics(frame: pd.DataFrame, role: str, pressure_col: str) -> pd.Dat
         _as_bool(d["is_legal_ball"]) if "is_legal_ball" in d
         else pd.Series(True, index=d.index)
     )
+    d["legal_match_id"] = d["match_id"].where(d["is_legal_metric_ball"])
     # All wides/no-balls are included in runs conceded, but only legal balls
     # count toward overs, wickets-per-ball and dot-ball-rate denominators.
     d["runs_conceded"] = (
@@ -128,7 +129,7 @@ def _player_metrics(frame: pd.DataFrame, role: str, pressure_col: str) -> pd.Dat
     d["credited_wicket"] = _as_bool(d["bowler_credited_wicket"]) if "bowler_credited_wicket" in d else False
     d["legal_dot"] = d["runs_conceded"].eq(0) & d["is_legal_metric_ball"]
     result = d.groupby(["player_key", "player_name"], as_index=False).agg(
-        deliveries=("is_legal_metric_ball", "sum"), matches=("match_id", "nunique"),
+        deliveries=("is_legal_metric_ball", "sum"), matches=("legal_match_id", "nunique"),
         runs_conceded=("runs_conceded", "sum"), wickets=("credited_wicket", "sum"),
         dots=("legal_dot", "sum"), mean_pressure=(pressure_col, "mean"),
     )
