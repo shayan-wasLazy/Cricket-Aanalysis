@@ -638,22 +638,29 @@ def build_rr_intelligence(source: str | Path, output_dir: str | Path,
             if not frequent_xi_phase_options.empty else "No phase options were available."
         )
         report.write("\n\n## RR XI pressure weakness review and role-matched replacements\n\n")
+        review_columns = [
+            "historical_xi_rank", "player_name", "role", "phase", "pi_type",
+            "team_need_score", "decision_score", "weakness_score", "weakness_status",
+            "rr_pi_pressure_deliveries", "rr_pi_pressure_matches",
+            "rr_last_over_deliveries", "rr_last_over_matches", "rr_last_over_uplift",
+            "last_over_weakness_score", "rr_last_over_sample_adequate", "weakness_reason",
+        ]
+        review_columns = [c for c in review_columns if c in xi_review.columns]
         report.write(
-            xi_review[[
-                "historical_xi_rank", "player_name", "role", "phase",
-                "pi_type", "team_need_score", "decision_score", "weakness_score",
-                "weakness_status", "weakness_reason",
-            ]].to_markdown(index=False)
+            xi_review[review_columns].to_markdown(index=False)
             if not xi_review.empty else "No XI pressure review rows were available."
         )
         report.write("\n\n")
+        replacement_columns = [
+            "replaces_player", "weak_role", "weak_phase", "replacement_rank",
+            "player_name", "candidate_score", "decision_score", "pi_type",
+            "pi_pressure_deliveries", "pi_pressure_matches",
+            "last_over_fit_score", "last_over_deliveries", "last_over_matches",
+            "last_over_candidate_evidence", "candidate_sample_status", "availability_status",
+        ]
+        replacement_columns = [c for c in replacement_columns if c in replacements.columns]
         report.write(
-            replacements[[
-                "replaces_player", "weak_role", "weak_phase", "replacement_rank",
-                "player_name", "candidate_score", "decision_score", "pi_type",
-                "pi_pressure_deliveries", "pi_pressure_matches",
-                "candidate_sample_status", "availability_status",
-            ]].to_markdown(index=False)
+            replacements[replacement_columns].to_markdown(index=False)
             if not replacements.empty else "No phase-matched replacement cleared the current sample gates."
         )
         report.write("\n\n")
