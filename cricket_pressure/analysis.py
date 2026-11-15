@@ -356,6 +356,56 @@ def _plot_extra_diagnostics(
             plt.close(fig)
 
 
+def _pakistan_player_ids(tables: dict[str, pd.DataFrame]) -> set[int]:
+    """Return player IDs mapped to the Pakistan national team in source metadata.
+
+    This affects candidate eligibility only; it does not remove deliveries from
+    match-state construction or alter other players' performance observations.
+    """
+    teams = tables["teams"].copy()
+    mapping = tables["player_mapping"].copy()
+
+    def find_column(frame: pd.DataFrame, candidates: tuple[str, ...], label: str) -> str:
+        lookup = {str(c).strip().lower(): c for c in frame.columns}
+        for candidate in candidates:
+            if candidate in lookup:
+                return lookup[candidate]
+        raise ValueError(
+            f"Cannot apply Pakistan player exclusion: {label} column not found. "
+            f"Available columns: {list(frame.columns)}"
+        )
+
+    team_id_col = find_column(teams, ("team_id", "id"), "team ID")
+    team_name_col = find_column(
+        teams, ("team_name", "name", "team", "team_full_name"), "team name"
+    )
+    mapping_team_col = find_column(mapping, ("team_id",), "mapping team ID")
+    mapping_player_col = find_column(
+        mapping, ("player_id", "person_id"), "mapping player ID"
+    )
+
+    names = teams[team_name_col].fillna("").astype(str).str.strip().str.casefold()
+    pakistan_team_ids = set(
+        pd.to_numeric(
+            teams.loc[names.str.fullmatch(r"pakistan(?: men| national cricket team)?"),
+                      team_id_col],
+            errors="coerce",
+        ).dropna().astype(int)
+    )
+    if not pakistan_team_ids:
+        raise ValueError(
+            "Pakistan player exclusion is enabled, but no Pakistan national-team "
+            "record was found in teams.csv. Check the source team names."
+        )
+
+    mapped_team_ids = pd.to_numeric(mapping[mapping_team_col], errors="coerce")
+    player_ids = pd.to_numeric(
+        mapping.loc[mapped_team_ids.isin(pakistan_team_ids), mapping_player_col],
+        errors="coerce",
+    ).dropna()
+    return set(player_ids.astype(int))
+
+
 def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int = 42) -> dict:
     root = Path(project_root)
     dirs = _ensure_dirs(root)
@@ -415,6 +465,13 @@ def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int =
     # Player rankings compare high-pressure performance under several PI weightings and XGBoost.
     player_comparison = _player_summary(real)  # full-sample exposure reference; descriptive only
     player_rankings = build_player_rankings(real)
+    # Apply shortlist eligibility after calculating metrics. Pakistani players
+    # are excluded from submitted rankings; their deliveries remain in the data.
+    excluded_ids = _pakistan_player_ids(tables)
+    if not player_rankings.empty:
+        player_rankings = player_rankings.loc[
+            ~pd.to_numeric(player_rankings["player_id"], errors="coerce").isin(excluded_ids)
+        ].copy()
     player_top10 = compare_top10_rankings(player_rankings, top_n=10)
     player_rrf = build_weighted_rrf_ensemble(player_rankings, half_life=None)
     player_rrf_top20 = compare_top_rrf_ensemble(player_rrf, top_n=20)
