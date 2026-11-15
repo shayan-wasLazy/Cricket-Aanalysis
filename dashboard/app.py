@@ -1,228 +1,393 @@
 from __future__ import annotations
+
 import json
 import sys
 from pathlib import Path
 
-from xgboost import XGBClassifier
 import numpy as np
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 from scipy.stats import spearmanr
 import streamlit as st
+from xgboost import XGBClassifier
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+
 from cricket_pressure.pressure import DEFAULT_WEIGHTS
 from cricket_pressure.synthetic import FEATURE_COLUMNS, CLASS_NAMES, CLASS_MIDPOINTS
 
 st.set_page_config(page_title="SupeRR Pressure Lab", page_icon="🏏", layout="wide")
 st.markdown("""
 <style>
-    .block-container {padding-top: 1.5rem; padding-bottom: 2rem; max-width: 1500px;}
-    [data-testid="stMetric"] {background: #111827; border: 1px solid #263244; padding: 14px 16px; border-radius: 12px;}
-    [data-testid="stMetricLabel"] {color: #9ca3af;}
-    [data-testid="stMetricValue"] {color: #f9fafb;}
-    .hero {padding: 20px 22px; border: 1px solid #263244; border-radius: 16px; background: linear-gradient(110deg,#111827,#18283a); margin-bottom: 20px;}
-    .hero h1 {margin: 0 0 6px 0; font-size: 2rem;}
-    .hero p {color: #a9b6c7; margin: 0;}
-    .muted {color: #94a3b8; font-size: .9rem;}
+.block-container {padding-top:1.35rem;padding-bottom:2rem;max-width:1550px;}
+[data-testid="stMetric"] {background:#111827;border:1px solid #263244;padding:12px 15px;border-radius:12px;}
+[data-testid="stMetricLabel"] {color:#9ca3af;}
+[data-testid="stMetricValue"] {color:#f9fafb;}
+.hero {padding:20px 22px;border:1px solid #263244;border-radius:16px;background:linear-gradient(110deg,#111827,#18283a);margin-bottom:18px;}
+.hero h1 {margin:0 0 6px 0;font-size:2rem;}
+.hero p,.muted {color:#9ca3af;}
 </style>
-<div class="hero"><h1>🏏 SupeRR Pressure Lab</h1><p>Compare the transparent PI heuristic against an XGBoost model trained on explicitly synthetic pressure scenarios.</p></div>
+<div class="hero"><h1>🏏 SupeRR Pressure Lab</h1><p>Pressure Index, synthetic XGBoost, player ranking stability, score audits and historical win-probability validation.</p></div>
 """, unsafe_allow_html=True)
 
 OUT = ROOT / "outputs"
 PROC = ROOT / "data" / "processed" / "real_pressure_comparison.csv.gz"
 MODEL_PATH = ROOT / "models" / "synthetic_pressure_xgb.json"
-SUMMARY_PATH = OUT / "metrics" / "run_summary.json"
 METRICS_PATH = OUT / "metrics" / "experiment_metrics.json"
+OUTCOME_METRICS_PATH = OUT / "metrics" / "historical_win_probability_metrics.json"
 
 if not PROC.exists() or not MODEL_PATH.exists():
-    st.warning("Analysis outputs are not available yet. Run the notebook or `python run_analysis.py` from the project root first.")
+    st.warning("Analysis outputs are not available yet. Run python run_analysis.py from the project root.")
     st.code("pip install -r requirements.txt\npython run_analysis.py\nstreamlit run dashboard/app.py", language="bash")
     st.stop()
 
+def _read_optional(path: Path) -> pd.DataFrame:
+    return pd.read_csv(path, low_memory=False) if path.exists() else pd.DataFrame()
+
 @st.cache_data(show_spinner=False)
 def load_data():
-    df = pd.read_csv(PROC, low_memory=False)
-    players = pd.read_csv(OUT / "player_pressure_comparison.csv") if (OUT / "player_pressure_comparison.csv").exists() else pd.DataFrame()
-    by_season = pd.read_csv(OUT / "match_format_season_summary.csv") if (OUT / "match_format_season_summary.csv").exists() else pd.DataFrame()
-    sensitivity = pd.read_csv(OUT / "weight_sensitivity.csv") if (OUT / "weight_sensitivity.csv").exists() else pd.DataFrame()
-    scenario = pd.read_csv(OUT / "scenario_lab.csv") if (OUT / "scenario_lab.csv").exists() else pd.DataFrame()
-    importance = pd.read_csv(OUT / "xgb_feature_importance.csv") if (OUT / "xgb_feature_importance.csv").exists() else pd.DataFrame()
-    return df, players, by_season, sensitivity, scenario, importance
+    return {
+        "real": pd.read_csv(PROC, low_memory=False),
+        "players": _read_optional(OUT / "player_pressure_comparison.csv"),
+        "rankings": _read_optional(OUT / "player_rankings.csv"),
+        "top10": _read_optional(OUT / "player_top10_comparison.csv"),
+        "by_season": _read_optional(OUT / "match_format_season_summary.csv"),
+        "sensitivity": _read_optional(OUT / "weight_sensitivity.csv"),
+        "scenario": _read_optional(OUT / "scenario_lab.csv"),
+        "importance": _read_optional(OUT / "xgb_feature_importance.csv"),
+        "disagreements": _read_optional(OUT / "match_disagreement_summary.csv"),
+        "delivery_disagreements": _read_optional(OUT / "delivery_disagreements.csv"),
+        "score_audit": _read_optional(OUT / "score_reconciliation_audit.csv"),
+        "innings_audit": _read_optional(OUT / "innings_validation.csv"),
+        "outcome_calibration": _read_optional(OUT / "historical_win_probability_calibration.csv"),
+        "outcome_importance": _read_optional(OUT / "historical_win_probability_feature_importance.csv"),
+        "outcome_predictions": _read_optional(ROOT / "data" / "processed" / "historical_win_probability_predictions.csv.gz"),
+    }
 
 @st.cache_resource(show_spinner=False)
-def load_model():
+def load_synthetic_model():
     model = XGBClassifier()
     model.load_model(MODEL_PATH)
     return model
 
 @st.cache_data(show_spinner=False)
 def load_json(path: str):
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    p = Path(path)
+    return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
 
-df, players, by_season, sensitivity, scenario_lab, importance = load_data()
-model = load_model()
-summary = load_json(str(SUMMARY_PATH)) if SUMMARY_PATH.exists() else {}
-metrics = load_json(str(METRICS_PATH)) if METRICS_PATH.exists() else {}
+data = load_data()
+df = data["real"]
+model = load_synthetic_model()
+metrics = load_json(str(METRICS_PATH))
+outcome_metrics = load_json(str(OUTCOME_METRICS_PATH))
 
 with st.sidebar:
-    st.header("Explore data")
+    st.header("Explore historical states")
     formats = sorted(df["match_format"].dropna().astype(str).unique().tolist())
     selected_formats = st.multiselect("Format", formats, default=formats)
     seasons = sorted(df["season"].dropna().astype(str).unique().tolist())
     selected_seasons = st.multiselect("Season", seasons, default=seasons)
     st.divider()
-    st.caption("PI weights used in the baseline")
+    st.caption("Baseline PI weights")
     for key, value in DEFAULT_WEIGHTS.items():
         st.write(f"{key.replace('_', ' ').title()}: **{value:.1%}**")
     st.divider()
-    st.caption("Synthetic XGBoost is a rule-learning experiment, not a model trained on real pressure labels or historical winners.")
+    st.caption("Synthetic XGBoost reproduces a synthetic teacher rule. Historical outcome XGBoost is trained separately on match winners.")
 
-view = df.loc[df["match_format"].astype(str).isin(selected_formats) & df["season"].astype(str).isin(selected_seasons)].copy()
+view = df.loc[
+    df["match_format"].astype(str).isin(selected_formats)
+    & df["season"].astype(str).isin(selected_seasons)
+].copy()
 if view.empty:
     st.info("No rows match the selected filters.")
     st.stop()
 
-st.markdown("### Overview")
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Chase deliveries", f"{len(view):,}")
-c2.metric("Matches", f"{view['match_id'].nunique():,}")
-c3.metric("Mean PI", f"{view['pressure_index'].mean():.1f}")
-c4.metric("Mean XGB score", f"{view['xgb_pressure_score'].mean():.1f}")
-c5.metric("PI ↔ XGB Spearman", f"{view[['pressure_index','xgb_pressure_score']].corr(method='spearman').iloc[0,1]:.3f}")
+st.markdown("### Historical pressure overview")
+a, b, c, d, e = st.columns(5)
+a.metric("Chase deliveries", f"{len(view):,}")
+b.metric("Matches", f"{view['match_id'].nunique():,}")
+c.metric("Mean PI", f"{view['pressure_index'].mean():.1f}")
+d.metric("Mean synthetic XGB", f"{view['xgb_pressure_score'].mean():.1f}")
+e.metric("PI ↔ synthetic XGB Spearman", f"{view[['pressure_index','xgb_pressure_score']].corr(method='spearman').iloc[0,1]:.3f}")
 
 left, right = st.columns([1.2, 1])
 with left:
-    st.subheader("Pressure scores across real match states")
+    st.subheader("PI and synthetic-trained XGBoost")
     sample = view.sample(min(5000, len(view)), random_state=11)
-    fig = px.scatter(sample, x="pressure_index", y="xgb_pressure_score", color="match_format",
-                     hover_data=["match_id", "season", "required_run_rate", "wickets_remaining", "balls_remaining"],
-                     opacity=.55, labels={"pressure_index": "PI heuristic", "xgb_pressure_score": "Synthetic-trained XGBoost"})
-    fig.update_layout(height=430, margin=dict(l=10,r=10,t=20,b=10))
+    fig = px.scatter(
+        sample, x="pressure_index", y="xgb_pressure_score", color="match_format",
+        hover_data=["match_id", "season", "required_run_rate", "wickets_remaining", "balls_remaining"],
+        opacity=.55, labels={"pressure_index":"PI heuristic", "xgb_pressure_score":"Synthetic-trained XGBoost"},
+    )
+    fig.update_layout(height=420, margin=dict(l=10,r=10,t=20,b=10))
     st.plotly_chart(fig, use_container_width=True)
 with right:
     st.subheader("Pressure class mix")
-    cat = pd.concat([
+    counts = pd.concat([
         view["pressure_category"].astype(str).value_counts().rename("PI"),
         view["xgb_pressure_class"].astype(str).value_counts().rename("XGBoost"),
     ], axis=1).reindex(CLASS_NAMES).fillna(0).reset_index(names="Pressure class")
-    fig = px.bar(cat, x="Pressure class", y=["PI", "XGBoost"], barmode="group", height=430)
+    fig = px.bar(counts, x="Pressure class", y=["PI","XGBoost"], barmode="group", height=420)
     fig.update_layout(margin=dict(l=10,r=10,t=20,b=10), legend_title="Model")
     st.plotly_chart(fig, use_container_width=True)
 
-st.divider()
-tab1, tab2, tab3, tab4 = st.tabs(["Synthetic model diagnostics", "Scenario playground", "Weight lab", "Player comparison"])
+tabs = st.tabs([
+    "Synthetic diagnostics", "Scenario playground", "Weight lab",
+    "Match disagreement", "Player rankings", "Historical win model", "Score audit",
+])
 
-with tab1:
-    st.subheader("XGBoost — synthetic holdout evaluation")
-    st.caption("Metrics below answer: how well did XGBoost learn the synthetic teacher rule? They do not answer whether the teacher rule is the true cricket-pressure definition.")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("PI baseline accuracy", f"{metrics.get('pi_accuracy', float('nan')):.3f}")
+with tabs[0]:
+    st.subheader("Synthetic holdout — XGBoost vs PI")
+    st.caption("These metrics evaluate both methods against the generated synthetic labels. They do not validate psychological pressure in real matches.")
+    m1,m2,m3,m4 = st.columns(4)
+    m1.metric("PI accuracy", f"{metrics.get('pi_accuracy', float('nan')):.3f}")
     m2.metric("XGBoost accuracy", f"{metrics.get('xgb_accuracy', float('nan')):.3f}")
     m3.metric("PI macro-F1", f"{metrics.get('pi_macro_f1', float('nan')):.3f}")
     m4.metric("XGBoost macro-F1", f"{metrics.get('xgb_macro_f1', float('nan')):.3f}")
-    st.metric("Synthetic test scenarios", f"{metrics.get('n_test', 0):,}")
-    st.caption(f"Teacher-score MAE — PI: {metrics.get('pi_teacher_score_mae', float('nan')):.2f} · XGBoost: {metrics.get('xgb_teacher_score_mae_vs_class_midpoint', float('nan')):.2f}")
-    l, r = st.columns(2)
+    m5,m6,m7 = st.columns(3)
+    m5.metric("Test scenarios", f"{metrics.get('n_test', 0):,}")
+    m6.metric("PI teacher-score MAE", f"{metrics.get('pi_teacher_score_mae', float('nan')):.2f}")
+    m7.metric("XGB teacher-score MAE", f"{metrics.get('xgb_teacher_score_mae_vs_class_midpoint', float('nan')):.2f}")
+    l,r = st.columns(2)
     with l:
-        imp = importance.sort_values("importance", ascending=True)
-        fig = px.bar(imp, x="importance", y="feature", orientation="h", title="Feature importance")
-        fig.update_layout(height=390, margin=dict(l=10,r=10,t=45,b=10))
-        st.plotly_chart(fig, use_container_width=True)
+        if not data["importance"].empty:
+            fig = px.bar(data["importance"].sort_values("importance"), x="importance", y="feature",
+                         orientation="h", title="Feature importance in synthetic task")
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
     with r:
-        cm = np.asarray(metrics.get("confusion_matrix", np.zeros((4,4))))
-        fig = px.imshow(cm, x=CLASS_NAMES, y=CLASS_NAMES, text_auto=True, color_continuous_scale="Blues",
-                        labels=dict(x="Predicted synthetic class", y="Synthetic teacher class", color="Scenarios"),
-                        title="Synthetic holdout confusion matrix")
-        fig.update_layout(height=390, margin=dict(l=10,r=10,t=45,b=10))
-        st.plotly_chart(fig, use_container_width=True)
-    st.warning("Synthetic labels are generated from an explicit nonlinear rule plus noise. High test performance demonstrates learnability of that rule, not independent validation of real pressure.")
+        cm = np.asarray(metrics.get("confusion_matrix", []), dtype=float)
+        cm_path = OUT / "metrics" / "synthetic_xgb_confusion_matrix.csv"
+        if cm.size == 0 and cm_path.exists():
+            cm = pd.read_csv(cm_path, header=None).to_numpy()
+        if cm.shape == (4,4):
+            fig = px.imshow(cm, x=CLASS_NAMES, y=CLASS_NAMES, text_auto=True,
+                            labels={"x":"Predicted class","y":"Synthetic teacher class","color":"Scenarios"},
+                            color_continuous_scale="Blues", title="Synthetic holdout confusion matrix")
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.error("Confusion matrix missing. Rerun python run_analysis.py after pulling the latest code.")
+    st.warning("XGBoost can score better because the synthetic teacher deliberately contains nonlinear interactions. This is rule-learning performance, not evidence of better real-world pressure measurement.")
 
-with tab2:
-    st.subheader("Build a match situation")
-    st.caption("Change the situation and compare the hand-weighted PI against the synthetic-trained XGBoost output.")
-    a, b, c = st.columns(3)
-    with a:
+with tabs[1]:
+    st.subheader("Scenario playground")
+    st.caption("Enter a hypothetical chase state. The PI and XGBoost outputs are both heuristic/synthetic-model outputs, not match win probabilities.")
+    x1,x2,x3 = st.columns(3)
+    with x1:
         rrr = st.slider("Required run rate", 0.5, 30.0, 13.0, 0.5)
         wickets_left = st.slider("Wickets remaining", 0, 10, 5)
-    with b:
+    with x2:
         overs_total = st.selectbox("Scheduled overs", [10, 15, 20], index=2)
-        overs_left = st.slider("Overs remaining", 0.5, float(overs_total), min(10.0, float(overs_total)), 0.5)
-    with c:
+        overs_left = st.slider("Overs remaining", 0.5, float(overs_total), min(10.0,float(overs_total)), 0.5)
+    with x3:
         recent_rr = st.slider("Recent run rate", 0.0, 24.0, 9.0, 0.5)
         target_pct = st.slider("Target difficulty percentile", 0.0, 1.0, 0.70, 0.05)
-        stakes = st.slider("Match stakes (0–1)", 0.0, 1.0, 0.25, 0.05)
+        stakes = st.slider("Match stakes", 0.0, 1.0, 0.25, 0.05)
     balls_left = max(1, int(round(overs_left * 6)))
     scheduled_balls = int(overs_total * 6)
-    scenario = pd.DataFrame([{
-        "required_run_rate": rrr, "wickets_remaining": wickets_left,
-        "balls_remaining": balls_left, "scheduled_balls": scheduled_balls,
-        "recent_run_rate_12": recent_rr, "target_difficulty": target_pct,
-        "match_stakes": stakes, "death_over_pressure": float(np.clip(1 - balls_left/30,0,1)),
-        "is_t20i": 0,
+    row = pd.DataFrame([{
+        "required_run_rate":rrr, "wickets_remaining":wickets_left,
+        "balls_remaining":balls_left, "scheduled_balls":scheduled_balls,
+        "recent_run_rate_12":recent_rr, "target_difficulty":target_pct,
+        "match_stakes":stakes, "death_over_pressure":float(np.clip(1-balls_left/30,0,1)),
+        "is_t20i":0,
     }])
-    scenario["rrr_pressure"] = np.clip(rrr/12,0,1)
-    scenario["wicket_pressure"] = np.clip(1-wickets_left/10,0,1)
-    scenario["time_urgency"] = np.clip(1-balls_left/scheduled_balls,0,1)
-    scenario["momentum_pressure"] = np.clip(max(rrr-recent_rr,0)/12,0,1)
-    scenario["target_difficulty"] = target_pct
-    scenario["match_stakes"] = stakes
-    pi_score = sum(scenario[k].iloc[0] * w for k,w in DEFAULT_WEIGHTS.items()) * 100
-    prob = model.predict_proba(scenario[FEATURE_COLUMNS])[0]
-    xgb_score = float(prob @ CLASS_MIDPOINTS)
-    pred_cls = CLASS_NAMES[int(prob.argmax())]
-    z1,z2,z3 = st.columns(3)
-    z1.metric("PI heuristic", f"{pi_score:.1f}/100")
-    z2.metric("XGBoost expected score", f"{xgb_score:.1f}/100")
-    z3.metric("XGBoost predicted class", pred_cls)
-    prob_df = pd.DataFrame({"Class": CLASS_NAMES, "Probability": prob})
-    fig = px.bar(prob_df, x="Class", y="Probability", range_y=[0,1], title="XGBoost synthetic class probabilities")
+    row["rrr_pressure"] = np.clip(rrr/12,0,1)
+    row["wicket_pressure"] = np.clip(1-wickets_left/10,0,1)
+    row["time_urgency"] = np.clip(1-balls_left/scheduled_balls,0,1)
+    row["momentum_pressure"] = np.clip(max(rrr-recent_rr,0)/12,0,1)
+    pi_score = 100 * sum(row[k].iloc[0]*w for k,w in DEFAULT_WEIGHTS.items())
+    probs = model.predict_proba(row[FEATURE_COLUMNS])[0]
+    xgb_score = float(probs @ CLASS_MIDPOINTS)
+    q1,q2,q3 = st.columns(3)
+    q1.metric("PI heuristic", f"{pi_score:.1f}/100")
+    q2.metric("Synthetic XGB score", f"{xgb_score:.1f}/100")
+    q3.metric("XGB class", CLASS_NAMES[int(probs.argmax())])
+    fig = px.bar(pd.DataFrame({"Class":CLASS_NAMES,"Probability":probs}), x="Class", y="Probability",
+                 range_y=[0,1], title="Synthetic XGBoost class probabilities")
     st.plotly_chart(fig, use_container_width=True)
-    st.caption(f"Death-over contribution: {scenario['death_over_pressure'].iloc[0]:.2f} · Balls remaining: {balls_left}")
+    st.caption(f"Death-over pressure component: {row['death_over_pressure'].iloc[0]:.2f} · {balls_left} legal balls remaining")
 
-with tab3:
+with tabs[2]:
     st.subheader("PI weight sensitivity lab")
-    st.caption("The sliders change the heuristic weights. We normalize the selected values to sum to 100% before calculating scores.")
+    st.caption("Sliders are normalized to 100%. Compare the score distribution and rank ordering with the current PI.")
     keys = list(DEFAULT_WEIGHTS)
     cols = st.columns(4)
     chosen = {}
-    for i, key in enumerate(keys):
+    for i,key in enumerate(keys):
         with cols[i % 4]:
-            chosen[key] = st.slider(key.replace("_", " ").title(), 0.0, 0.50, float(DEFAULT_WEIGHTS[key]), 0.01, key=f"weight_{key}")
+            chosen[key] = st.slider(key.replace("_"," ").title(), 0.0, 0.50,
+                                    float(DEFAULT_WEIGHTS[key]), 0.01, key=f"weight_{key}")
     total = sum(chosen.values())
     if total <= 0:
         st.error("At least one weight must be above zero.")
     else:
-        norm = {k:v/total for k,v in chosen.items()}
-        score = sum(view[k].fillna(0) * w for k,w in norm.items()) * 100
-        rho = float(spearmanr(view["pressure_index"], score).statistic)
-        st.write("Normalized weights", {k: f"{v:.1%}" for k,v in norm.items()})
+        normalized = {k:v/total for k,v in chosen.items()}
+        adjusted = 100 * sum(view[k].fillna(0)*w for k,w in normalized.items())
+        rho = float(spearmanr(view["pressure_index"], adjusted).statistic)
         q1,q2,q3 = st.columns(3)
-        q1.metric("Adjusted PI mean", f"{score.mean():.1f}")
-        q2.metric("Spearman vs baseline PI", f"{rho:.3f}")
-        q3.metric("Mean absolute score change", f"{(score-view['pressure_index']).abs().mean():.2f}")
-        fig = px.histogram(pd.DataFrame({"Baseline PI":view["pressure_index"],"Adjusted PI":score}), barmode="overlay", opacity=.6,
-                           title="Baseline versus adjusted PI distribution")
+        q1.metric("Adjusted mean PI", f"{adjusted.mean():.2f}")
+        q2.metric("Spearman vs baseline", f"{rho:.4f}")
+        q3.metric("Mean absolute change", f"{(adjusted-view['pressure_index']).abs().mean():.2f}")
+        st.write("Normalized weights", {k:f"{v:.1%}" for k,v in normalized.items()})
+        fig = px.histogram(pd.DataFrame({"Baseline PI":view["pressure_index"],"Adjusted PI":adjusted}),
+                           barmode="overlay",opacity=.6,title="Baseline versus adjusted PI distribution")
         st.plotly_chart(fig, use_container_width=True)
-    if not sensitivity.empty:
-        st.subheader("Pre-computed weight scenarios")
-        st.dataframe(sensitivity, use_container_width=True, hide_index=True)
+    if not data["sensitivity"].empty:
+        st.subheader("Precomputed weight scenarios")
+        st.dataframe(data["sensitivity"], use_container_width=True, hide_index=True)
 
-with tab4:
-    st.subheader("Player pressure exposure")
-    st.caption("These are exposure and descriptive performance summaries, not final player rankings. Bowler conceded runs remain provisional because of unresolved byes/legbyes.")
-    if players.empty:
-        st.info("Player summaries were not generated.")
+with tabs[3]:
+    st.subheader("Match-by-match disagreement")
+    st.caption("Matches are ranked by average absolute difference between PI and the synthetic-trained XGBoost score. This identifies cases worth manual review; it does not tell us which model is correct.")
+    disagreements = data["disagreements"]
+    if disagreements.empty:
+        st.info("No match disagreement file found. Run the latest analysis pipeline.")
     else:
-        roles = sorted(players["role"].dropna().unique().tolist())
-        role = st.selectbox("Role", roles)
-        p = players.loc[players["role"].eq(role)].copy()
-        sort_col = "runs_per_100_pressure_deliveries" if role == "Batter" else "wickets_per_100_pressure_deliveries"
-        if sort_col in p:
-            p = p.sort_values(sort_col, ascending=False)
-        st.dataframe(p.head(100), use_container_width=True, hide_index=True)
+        st.dataframe(disagreements.head(30), use_container_width=True, hide_index=True)
+        opts = disagreements["match_id"].dropna().astype(int).tolist()
+        selected_match = st.selectbox("Inspect match ID", opts, key="disagreement_match")
+        match_rows = view.loc[view["match_id"].eq(selected_match)].sort_values("innings_ball_num")
+        if not match_rows.empty:
+            m1,m2,m3 = st.columns(3)
+            m1.metric("Mean absolute gap", f"{match_rows['absolute_pi_xgb_gap'].mean():.2f}" if "absolute_pi_xgb_gap" in match_rows else f"{(match_rows['pressure_index']-match_rows['xgb_pressure_score']).abs().mean():.2f}")
+            m2.metric("PI average", f"{match_rows['pressure_index'].mean():.1f}")
+            m3.metric("XGB average", f"{match_rows['xgb_pressure_score'].mean():.1f}")
+            fig = px.line(match_rows, x="innings_ball_num", y=["pressure_index","xgb_pressure_score"],
+                          labels={"innings_ball_num":"Delivery sequence","value":"Pressure score","variable":"Model"},
+                          title=f"Pressure trajectory — match {selected_match}")
+            st.plotly_chart(fig, use_container_width=True)
+            show_cols = [c for c in ["innings_ball_num","score_before","runs_required","required_run_rate",
+                                     "wickets_remaining","balls_remaining","pressure_index","xgb_pressure_score"]
+                         if c in match_rows.columns]
+            detail = match_rows.copy()
+            detail["absolute_gap"] = (detail["pressure_index"]-detail["xgb_pressure_score"]).abs()
+            st.caption("Most divergent deliveries in the selected match")
+            st.dataframe(detail.sort_values("absolute_gap",ascending=False)[show_cols+["absolute_gap"]].head(15),
+                         use_container_width=True, hide_index=True)
+        if not data["delivery_disagreements"].empty:
+            with st.expander("Largest delivery-level disagreements across all matches"):
+                st.dataframe(data["delivery_disagreements"].head(100), use_container_width=True, hide_index=True)
+
+with tabs[4]:
+    st.subheader("High-pressure player rankings")
+    st.caption("Performance within high-pressure deliveries (score ≥60). Batter metric: runs/100 balls. Bowler metric: credited wickets/100 balls. Rates are shrunk toward the role-wide rate; they are not yet clutch uplift versus each player's normal baseline.")
+    rankings = data["rankings"]
+    if rankings.empty:
+        st.info("Player rankings have not been generated. Run python run_analysis.py.")
+    else:
+        c1,c2,c3 = st.columns(3)
+        with c1:
+            role = st.selectbox("Player role", ["Batter","Bowler"])
+        with c2:
+            max_d = int(max(100, rankings["pressure_deliveries"].max()))
+            min_deliveries = st.number_input("Minimum pressure deliveries", min_value=0, max_value=max_d,
+                                             value=100, step=25)
+        with c3:
+            max_m = int(max(10, rankings["pressure_matches"].max()))
+            min_matches = st.number_input("Minimum pressure matches", min_value=0, max_value=max_m,
+                                          value=10, step=1)
+        methods = sorted(rankings["scoring_method"].dropna().unique().tolist(),
+                         key=lambda x: list(["PI baseline","PI RRR-heavy","PI momentum-heavy","PI stakes-heavy","XGBoost"]).index(x)
+                         if x in ["PI baseline","PI RRR-heavy","PI momentum-heavy","PI stakes-heavy","XGBoost"] else 99)
+        selected_methods = st.multiselect("Models to compare", methods, default=methods)
+        p = rankings.loc[rankings["role"].eq(role) & rankings["scoring_method"].isin(selected_methods)].copy()
+        p["eligible_current"] = p["pressure_deliveries"].ge(min_deliveries) & p["pressure_matches"].ge(min_matches)
+        p["current_rank"] = np.nan
+        for method, idx in p.loc[p["eligible_current"]].groupby("scoring_method").groups.items():
+            p.loc[idx, "current_rank"] = p.loc[idx, "shrunk_per_100"].rank(method="min", ascending=False)
+        top = p.loc[p["eligible_current"] & p["current_rank"].le(10)].sort_values(["scoring_method","current_rank"])
+        k1,k2,k3 = st.columns(3)
+        k1.metric("Eligible players", f"{p['eligible_current'].sum():,}")
+        base_names = set(top.loc[top["scoring_method"].eq("PI baseline"),"player_id"])
+        if base_names:
+            overlap = len(base_names.intersection(set(top.loc[top["scoring_method"].eq("XGBoost"),"player_id"])))
+            k2.metric("PI / XGB top-10 overlap", f"{overlap}/10")
+        else:
+            k2.metric("PI / XGB top-10 overlap", "—")
+        k3.metric("Methods compared", f"{len(selected_methods)}")
+        st.dataframe(top[["scoring_method","role","current_rank","player_name","pressure_deliveries",
+                          "pressure_matches","observed_per_100","shrunk_per_100","eligible_current"]],
+                     use_container_width=True, hide_index=True)
+        if not top.empty:
+            fig = px.bar(top, x="player_name", y="shrunk_per_100", color="scoring_method",
+                         barmode="group", facet_col="scoring_method",
+                         title=f"Top eligible {role.lower()}s by high-pressure performance",
+                         labels={"shrunk_per_100":"Shrunk rate per 100 pressure deliveries","player_name":"Player"})
+            fig.update_layout(height=520, showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+        with st.expander("All player samples, including ineligible players"):
+            st.dataframe(p.sort_values(["scoring_method","eligible_current","shrunk_per_100"],
+                                       ascending=[True,False,False]),
+                         use_container_width=True, hide_index=True)
+
+with tabs[5]:
+    st.subheader("Historical win-probability model")
+    st.caption("This model is separate from the synthetic pressure classifier. It predicts whether the second-innings batting team eventually won, using pre-delivery state and a chronological match holdout.")
+    if not outcome_metrics:
+        st.info("Historical outcome model outputs not found. Run the latest python run_analysis.py.")
+    else:
+        q1,q2,q3,q4 = st.columns(4)
+        q1.metric("Match-weighted ROC-AUC", f"{outcome_metrics.get('roc_auc_match_weighted', float('nan')):.3f}")
+        q2.metric("Match-weighted Brier", f"{outcome_metrics.get('brier_score_match_weighted', float('nan')):.3f}")
+        q3.metric("Baseline Brier", f"{outcome_metrics.get('baseline_brier_score_match_weighted', float('nan')):.3f}")
+        q4.metric("Match-weighted log loss", f"{outcome_metrics.get('log_loss_match_weighted', float('nan')):.3f}")
+        q5,q6,q7 = st.columns(3)
+        q5.metric("Train matches", f"{outcome_metrics.get('train_matches',0):,}")
+        q6.metric("Test matches", f"{outcome_metrics.get('test_matches',0):,}")
+        q7.metric("Test deliveries", f"{outcome_metrics.get('test_deliveries',0):,}")
+        st.write(f"Chronological cutoff: **{outcome_metrics.get('cutoff_date_utc','unavailable')}**")
+        l,r = st.columns(2)
+        with l:
+            cal = data["outcome_calibration"]
+            if not cal.empty:
+                fig = px.line(cal, x="mean_predicted_probability", y="observed_win_rate",
+                              markers=True, range_x=[0,1], range_y=[0,1],
+                              title="Win probability calibration",
+                              labels={"mean_predicted_probability":"Mean predicted win probability",
+                                      "observed_win_rate":"Observed win rate"})
+                fig.add_shape(type="line", x0=0,y0=0,x1=1,y1=1,line=dict(dash="dash",color="gray"))
+                st.plotly_chart(fig, use_container_width=True)
+        with r:
+            imp = data["outcome_importance"]
+            if not imp.empty:
+                fig = px.bar(imp.sort_values("importance"), x="importance", y="feature", orientation="h",
+                             title="Historical outcome model feature importance")
+                st.plotly_chart(fig, use_container_width=True)
+        st.warning("This is an empirical outcome benchmark, not psychological pressure ground truth. A badly calibrated win-probability curve should not be converted directly into a pressure score.")
+        if not data["outcome_predictions"].empty:
+            with st.expander("Held-out delivery predictions"):
+                st.dataframe(data["outcome_predictions"].head(100), use_container_width=True, hide_index=True)
+
+with tabs[6]:
+    st.subheader("Score reconstruction and innings audit")
+    st.caption("The source pack does not provide a separate official scorecard table. This audit checks innings integrity and only compares run margins where result text supports it and no bye/legbye runs remain unresolved.")
+    audit = data["score_audit"]
+    innings_audit = data["innings_audit"]
+    if audit.empty:
+        st.info("Score audit not generated. Run python run_analysis.py.")
+    else:
+        eligible = int(audit["run_margin_audit_eligible"].sum())
+        consistent = int(audit["run_margin_audit_status"].eq("consistent with reported margin").sum())
+        unresolved = int(audit["unresolved_extra_deliveries"].gt(0).sum())
+        q1,q2,q3,q4 = st.columns(4)
+        q1.metric("Matches audited", f"{len(audit):,}")
+        q2.metric("Comparable run margins", f"{eligible:,}")
+        q3.metric("Margins consistent", f"{consistent:,}")
+        q4.metric("Matches with unresolved extras", f"{unresolved:,}")
+        st.warning("Matches with unresolved bye/legbye scoring are explicitly marked provisional; their score-margin differences are not used as a pass/fail check.")
+        status_options = ["All"] + sorted(audit["run_margin_audit_status"].dropna().unique().tolist())
+        status_filter = st.selectbox("Audit status", status_options)
+        filtered = audit if status_filter == "All" else audit.loc[audit["run_margin_audit_status"].eq(status_filter)]
+        st.dataframe(filtered, use_container_width=True, hide_index=True)
+        if not innings_audit.empty:
+            with st.expander("Innings-level legal-ball and wicket checks"):
+                st.dataframe(innings_audit, use_container_width=True, hide_index=True)
 
 st.divider()
-st.markdown("<p class='muted'>Methodology note: the PI is a transparent heuristic. XGBoost is trained only on synthetic labels generated by a declared rule. PI–XGBoost agreement on historical rows measures model agreement, not predictive validity. The supplied data has unresolved bye/legbye scoring fields and no tournament standings table to establish must-win status.</p>", unsafe_allow_html=True)
+st.markdown(
+    "<p class='muted'>Methodology: PI is a transparent heuristic; synthetic XGBoost learns a declared synthetic rule; the historical outcome XGBoost predicts actual chase outcomes on a later-match holdout. These are three different purposes. Unresolved bye/legbye values and the lack of tournament standings remain data limitations.</p>",
+    unsafe_allow_html=True,
+)
