@@ -89,7 +89,7 @@ def _summarise_role(
             "is_legal_ball", pd.Series(True, index=d.index)
         ).fillna(False).astype(bool)
         dismissal = d.get("dismissal_type", pd.Series("", index=d.index)).fillna("").astype(str).str.strip().str.lower()
-        credited_types = {"caught", "bowled", "lbw", "stumped", "stump", "hit wicket"}
+        credited_types = {"caught", "caught and bowled", "bowled", "lbw", "stumped", "stump", "hit wicket"}
         d["credited_wicket"] = (
             d["is_wicket"].fillna(False).astype(bool) & dismissal.isin(credited_types)
         ).astype(int)
