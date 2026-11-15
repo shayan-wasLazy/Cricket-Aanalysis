@@ -481,6 +481,7 @@ def build_rr_weakness_replacements(
     review["last_over_weakness_score"] = np.where(
         review["role"].eq("Batter"), batter_last_score, bowler_last_score
     ).clip(0, 100)
+    review["last_over_weakness_score"] = review["last_over_weakness_score"].fillna(0.0)
     last_over_sample_ok = review.get(
         "rr_last_over_sample_adequate", pd.Series(False, index=review.index)
     ).fillna(False)
@@ -518,11 +519,19 @@ def build_rr_weakness_replacements(
                     f"last-over pressure strike-rate uplift is {row['rr_last_over_uplift']:+.1f} "
                     "points vs the player's lower-pressure last-over baseline"
                 )
+                if pd.notna(row.get("rr_last_over_boundary_delta")):
+                    parts.append(f"last-over boundary-rate delta {row['rr_last_over_boundary_delta']:+.2f} per 100 balls")
+                if pd.notna(row.get("rr_last_over_dismissal_delta")):
+                    parts.append(f"last-over dismissal-rate delta {row['rr_last_over_dismissal_delta']:+.2f} per 100 balls")
             elif row["role"] == "Bowler" and pd.notna(row.get("rr_last_over_uplift")):
                 parts.append(
                     f"last-over pressure economy improvement is {row['rr_last_over_uplift']:+.2f} "
                     "runs/over vs the player's lower-pressure last-over baseline"
                 )
+                if pd.notna(row.get("rr_last_over_wicket_delta")):
+                    parts.append(f"last-over wicket-rate delta {row['rr_last_over_wicket_delta']:+.2f} per 100 balls")
+                if pd.notna(row.get("rr_last_over_dot_delta")):
+                    parts.append(f"last-over dot-rate delta {row['rr_last_over_dot_delta']:+.2f} per 100 balls")
         if row["role"] == "Batter" and pd.notna(row.get("pressure_sr_uplift")):
             direction = "falls" if row["pressure_sr_uplift"] < 0 else "rises"
             parts.append(
