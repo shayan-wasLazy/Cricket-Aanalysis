@@ -57,12 +57,18 @@ def _match_balanced_weights(frame: pd.DataFrame, match_col: str = "match_id") ->
     return 1.0 / np.maximum(counts, 1.0)
 
 
-def _calibration_table(y_true: np.ndarray, probabilities: np.ndarray,
-                       sample_weight: np.ndarray, n_bins: int = 10) -> pd.DataFrame:
+def _calibration_table(
+    y_true: np.ndarray,
+    probabilities: np.ndarray,
+    sample_weight: np.ndarray,
+    match_ids: np.ndarray,
+    n_bins: int = 10,
+) -> pd.DataFrame:
     d = pd.DataFrame({
         "actual_win": y_true.astype(float),
         "win_probability": probabilities.astype(float),
         "sample_weight": sample_weight.astype(float),
+        "match_id": match_ids,
     })
     unique = int(d["win_probability"].nunique())
     if unique < 2:
@@ -75,22 +81,15 @@ def _calibration_table(y_true: np.ndarray, probabilities: np.ndarray,
     rows = []
     for label, g in d.groupby("probability_bin", sort=True, dropna=False):
         w = g["sample_weight"].to_numpy()
-        denom = float(w.sum())
         rows.append({
             "probability_bin": str(label),
             "mean_predicted_probability": float(np.average(g["win_probability"], weights=w)),
             "observed_win_rate": float(np.average(g["actual_win"], weights=w)),
             "deliveries": int(len(g)),
-            "matches": int(frame_match_count(g, frame=None)),
-            "weight_sum": denom,
+            "matches": int(g["match_id"].nunique()),
+            "weight_sum": float(w.sum()),
         })
     return pd.DataFrame(rows)
-
-
-def frame_match_count(_group: pd.DataFrame, frame=None) -> int:
-    # Calibration table operates on a compact temporary frame; report delivery
-    # counts there, while the parent metrics report the exact held-out match count.
-    return int(_group.shape[0])
 
 
 def train_historical_win_probability(
@@ -203,7 +202,7 @@ def train_historical_win_probability(
     predictions["predicted_batting_team_won"] = predicted
     predictions["match_sample_weight"] = w_test
 
-    calibration = _calibration_table(y_test.to_numpy(), probabilities, w_test)
+    calibration = _calibration_table(y_test.to_numpy(), probabilities, w_test, test["match_id"].to_numpy())
     importance = pd.DataFrame({
         "feature": HISTORICAL_FEATURES,
         "importance": model.feature_importances_,
