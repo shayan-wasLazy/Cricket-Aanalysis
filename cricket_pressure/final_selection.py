@@ -189,6 +189,8 @@ def _aggregate_pressure_and_baseline(
         & player["pressure_matches"].ge(min_matches)
         & player["normal_deliveries"].ge(min_deliveries)
         & player["normal_matches"].ge(min_matches)
+        & player["pressure_raw_den"].gt(0)
+        & player["normal_raw_den"].gt(0)
         & player["uplift_pct"].notna()
     )
     player["rank"] = np.nan
