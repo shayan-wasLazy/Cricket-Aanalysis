@@ -266,6 +266,11 @@ def _rr_player_phase_record(rr_rows: pd.DataFrame, role: str, phase: str, rr_tea
         pi_high, pi_base, xgb_high = "phase_bowling_pi_high", "phase_bowling_pi_baseline", "xgb_bowling_high"
     if d.empty:
         return pd.DataFrame()
+    # Keep this helper safe when called directly with raw delivery rows (for
+    # example, from tests); production callers may already have added PI flags.
+    required_flags = {pi_high, pi_base, xgb_high}
+    if not required_flags.issubset(d.columns):
+        d = _add_phase_pi(d)
     d["player_key"] = _key(d, id_col, name_col)
     d["player_name"] = d[name_col].fillna("Unknown")
     pi_rows = d.loc[_as_bool(d[pi_high])].copy()
