@@ -76,41 +76,48 @@ def _summarise_role(
             == pd.to_numeric(d["striker_id"], errors="coerce")
         ).astype(int)
         d["credited_wicket"] = 0
+        d["delivery_unit"] = 1.0
         count_col = "performance_count"
         metric_name = "runs_per_100_pressure_deliveries"
     else:
-        # Bowling rates use legal balls, not wides/no-balls.
-        if "is_legal_ball" in d.columns:
-            d = d.loc[d["is_legal_ball"].fillna(False).astype(bool)].copy()
-        if d.empty:
-            return pd.DataFrame()
+        # Keep all charged deliveries in the economy numerator. Only legal balls
+        # count in the denominator, wicket rate and dot-ball rate.
         d["player_id"] = pd.to_numeric(d["bowler_id"], errors="coerce")
         d["player_name"] = d["bowler_name"].fillna("Unknown")
+        d["is_legal_delivery"] = d.get(
+            "is_legal_ball", pd.Series(True, index=d.index)
+        ).fillna(False).astype(bool)
         dismissal = d.get("dismissal_type", pd.Series("", index=d.index)).fillna("").astype(str).str.strip().str.lower()
         credited_types = {"caught", "bowled", "lbw", "stumped", "stump", "hit wicket"}
         d["credited_wicket"] = (
             d["is_wicket"].fillna(False).astype(bool) & dismissal.isin(credited_types)
         ).astype(int)
         d["dismissal_of_player"] = 0
-        extras_type = d.get("extras_type", pd.Series("", index=d.index)).fillna("").astype(str).str.lower()
+        extras_type = d.get("extras_type", pd.Series("", index=d.index)).fillna("").astype(str).str.lower().str.strip()
         extras_runs = pd.to_numeric(d.get("extras_2_runs", pd.Series(0, index=d.index)), errors="coerce").fillna(0)
         charged_extra = extras_runs.where(extras_type.isin({"wide", "overstep"}), 0)
         charged_extra = charged_extra + extras_type.isin({"wide", "overstep"}).astype(float)
         d["bowler_runs_conceded"] = (
             pd.to_numeric(d["runs"], errors="coerce").fillna(0) + charged_extra
         )
-        d["bowler_dot"] = d["bowler_runs_conceded"].eq(0).astype(int)
+        d["bowler_dot"] = (
+            d["bowler_runs_conceded"].eq(0) & d["is_legal_delivery"]
+        ).astype(int)
+        d["delivery_unit"] = d["is_legal_delivery"].astype(float)
         d["weighted_runs_conceded"] = d["bowler_runs_conceded"] * d["recency_weight"].astype(float)
         d["weighted_dots"] = d["bowler_dot"] * d["recency_weight"].astype(float)
         count_col = "credited_wicket"
         metric_name = "wickets_per_100_pressure_deliveries"
 
-    # recency_weight is one for unweighted ranking and exponential for decayed ranking.
-    d["weighted_deliveries"] = d["recency_weight"].astype(float)
+    # Recency weights apply to the role's opportunity unit: batter balls faced
+    # or bowler legal balls.
+    d["weighted_deliveries"] = (
+        d["recency_weight"].astype(float) * d["delivery_unit"].astype(float)
+    )
     d["weighted_performance"] = d[count_col].astype(float) * d["recency_weight"].astype(float)
 
     aggregations = {
-        "pressure_deliveries": ("match_id", "size"),
+        "pressure_deliveries": ("delivery_unit", "sum"),
         "pressure_matches": ("match_id", "nunique"),
         "raw_performance": (count_col, "sum"),
         "weighted_deliveries": ("weighted_deliveries", "sum"),
@@ -166,9 +173,12 @@ def _summarise_role(
         activity["is_recent_365d"] = activity["match_date"].ge(
             reference_date - pd.Timedelta(days=365)
         )
+        activity["recent_delivery_units_365d"] = (
+            activity["is_recent_365d"].astype(float) * activity["delivery_unit"].astype(float)
+        )
         activity_summary = activity.groupby("player_id").agg(
             last_pressure_match_date=("match_date", "max"),
-            recent_pressure_deliveries_365d=("is_recent_365d", "sum"),
+            recent_pressure_deliveries_365d=("recent_delivery_units_365d", "sum"),
             recent_pressure_matches_365d=(
                 "match_id",
                 lambda s: s.loc[activity.loc[s.index, "is_recent_365d"]].nunique(),
