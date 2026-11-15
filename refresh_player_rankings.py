@@ -33,8 +33,6 @@ def main() -> None:
     )
 
     ensemble = build_weighted_rrf_ensemble(rankings, half_life=None)
-    if ensemble.empty:
-        raise RuntimeError("No players passed the weighted RRF support and eligibility gates.")
     ensemble.to_csv(output_dir / "player_rrf_ensemble.csv", index=False)
     compare_top_rrf_ensemble(ensemble, top_n=20).to_csv(
         output_dir / "player_rrf_top20.csv", index=False
@@ -43,7 +41,10 @@ def main() -> None:
     reference = rankings["recency_reference_date"].dropna().astype(str).iloc[0]
     print(f"Player rankings refreshed as of {reference}.")
     print(f"Saved {len(rankings):,} ranking rows to {output_dir / 'player_rankings.csv'}.")
-    print(f"Saved {len(ensemble):,} ensemble rows to {output_dir / 'player_rrf_ensemble.csv'}.")
+    if ensemble.empty:
+        print("No players passed the default RRF support and eligibility gates; the shortlist is empty.")
+    else:
+        print(f"Saved {len(ensemble):,} ensemble rows to {output_dir / 'player_rrf_ensemble.csv'}.")
     print(f"Saved {len(compare_top_rrf_ensemble(ensemble, top_n=20)):,} shortlist rows to {output_dir / 'player_rrf_top20.csv'}.")
 
 
