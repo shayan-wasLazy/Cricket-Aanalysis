@@ -74,11 +74,8 @@ def test_consensus_requires_three_pi_methods_and_excludes_synthetic_xgb():
     ].sort_values("consensus_rank")
     assert default["player_id"].tolist() == [10, 20]
     assert default["methods_supported"].eq(4).all()
-    assert "XGBoost" not in set(candidates.loc[
-        candidates["scoring_method"].isin(["PI baseline", "PI RRR-heavy",
-                                            "PI momentum-heavy", "PI stakes-heavy"]),
-        "scoring_method",
-    ]) or set(candidates["scoring_method"]).issuperset({"XGBoost"})
+    assert "XGBoost" in set(candidates["scoring_method"])
+    assert default["methods_supported"].eq(4).all()
     assert default.iloc[0]["baseline_pi_uplift_pct"] > default.iloc[1]["baseline_pi_uplift_pct"]
 
 
@@ -92,3 +89,38 @@ def test_final_selection_eligibility_requires_both_pressure_and_baseline_sample(
         & candidates["scoring_method"].eq("PI baseline")
     ]
     assert not pi["eligible"].any()
+
+
+
+def test_pressure_and_baseline_are_matched_within_format_and_season():
+    rows = _selection_fixture()
+    rows["season"] = np.where(rows["pressure_index"].ge(60), 2024, 2025)
+    candidates = build_final_selection_candidates(
+        rows, min_deliveries=1, min_matches=1, half_lives_days=(),
+    )
+    assert candidates.empty
+
+
+def test_bowler_uplift_uses_credited_wickets_per_legal_ball():
+    rows = _selection_fixture()
+    rows["is_wide"] = False
+    rows["is_legal_ball"] = True
+    rows["is_wicket"] = False
+    rows["dismissal_type"] = ""
+    # Give Bowler 110 one credited wicket on each pressure delivery and none in baseline.
+    mask = rows["bowler_id"].eq(110) & rows["pressure_index"].ge(60)
+    rows.loc[mask, "is_wicket"] = True
+    rows.loc[mask, "dismissal_type"] = "caught"
+    candidates = build_final_selection_candidates(
+        rows, min_deliveries=2, min_matches=2, prior_balls=10,
+        half_lives_days=(),
+    )
+    bowler = candidates.loc[
+        candidates["role"].eq("Bowler")
+        & candidates["scoring_method"].eq("PI baseline")
+        & candidates["half_life"].eq("unweighted")
+        & candidates["player_id"].eq(110)
+    ]
+    assert len(bowler) == 1
+    assert bowler.iloc[0]["pressure_rate"] > bowler.iloc[0]["normal_rate"]
+    assert bowler.iloc[0]["performance_metric"] == "Credited wickets per 100 legal balls"
