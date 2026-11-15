@@ -270,9 +270,8 @@ def _build_score_audit(states: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
         default="mismatch: investigate score reconstruction",
     )
     audit["innings_ball_integrity_issue"] = (
-        audit[["legal_balls_inn1", "legal_balls_inn2"]].fillna(0).gt(
-            audit[["scheduled_balls_inn1", "scheduled_balls_inn2"]].fillna(0)
-        ).any(axis=1)
+        audit["legal_balls_inn1"].fillna(0).gt(audit["scheduled_balls_inn1"].fillna(0))
+        | audit["legal_balls_inn2"].fillna(0).gt(audit["scheduled_balls_inn2"].fillna(0))
     )
     audit["wicket_integrity_issue"] = (
         audit[["wickets_inn1", "wickets_inn2"]].fillna(0).gt(10).any(axis=1)
