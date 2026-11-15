@@ -384,7 +384,7 @@ def build_player_fit_shortlist(all_ipl: pd.DataFrame, phase_gaps: pd.DataFrame) 
                 matches=("metric_match_id", "nunique"),
                 pressure_deliveries=("pressure_delivery_unit", "sum"),
                 pressure_runs=("metric_runs", lambda s: s[d.loc[s.index, "pressure_flag"]].sum()),
-                pressure_matches=("match_id", lambda s: s[d.loc[s.index, "pressure_flag"]].nunique()),
+                pressure_matches=("pressure_match_id", "nunique"),
                 franchises=("franchise", lambda s: "; ".join(sorted(set(s.dropna().astype(str))))),
             ).reset_index().rename(columns={name_col: "player_name"})
             grouped["strike_rate_or_economy"] = (
