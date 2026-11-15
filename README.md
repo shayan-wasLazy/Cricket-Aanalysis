@@ -1,18 +1,30 @@
 # SupeRR Selector — Pressure Modelling Lab
 
-A reproducible research workspace to compare a transparent, hand-weighted cricket Pressure Index (PI) with an XGBoost classifier trained on **synthetically generated** pressure labels.
+A reproducible research workspace for comparing a transparent, hand-weighted cricket Pressure Index (PI) with an XGBoost classifier trained on explicitly synthetic pressure labels.
 
-> **Interpretation guardrail:** the XGBoost model is trained on a synthetic teacher rule, not real match outcomes or human pressure labels. Its synthetic holdout metrics measure how well it learns that rule. Applying it to historical matches is an agreement comparison against the PI feature space, not proof that the XGBoost score is a better or more truthful pressure measure.
+> **Interpretation guardrail:** XGBoost learns a deliberately constructed synthetic teacher rule. Holdout metrics tell us how well it learns that rule—not whether the rule is the true cricket-pressure definition. Applying it to historical states measures model agreement with the PI feature space, not ground-truth validity.
 
-## What is included
+## Project contents
 
-- `notebooks/SupeRR_Pressure_Modelling_Comparison.ipynb` — end-to-end notebook with feature engineering, PI, synthetic generation, XGBoost training, diagnostics, comparisons, scenario tests, plots and exports.
-- `cricket_pressure/` — reusable data engineering, PI and synthetic XGBoost code.
-- `dashboard/app.py` — Streamlit decision dashboard with historical comparisons, model diagnostics, scenario playground and adjustable PI weights.
-- `data/raw/` — supplied competition, match, team, playing-XI, player mapping and compressed ball-by-ball CSV files.
-- `data/synthetic/` — reproducible synthetic scenarios and XGBoost holdout predictions.
-- `outputs/` — summaries, comparison tables, feature importance and graphs.
-- `models/synthetic_pressure_xgb.json` — trained synthetic-label XGBoost classifier.
+- `notebooks/SupeRR_Pressure_Modelling_Comparison.ipynb` — executed end-to-end notebook with analysis, synthetic experiment, metrics and plots.
+- `cricket_pressure/` — reusable feature engineering, PI, synthetic generation and analysis modules.
+- `dashboard/app.py` — Streamlit dashboard for historical PI/XGBoost comparisons, synthetic diagnostics, scenario exploration and PI weight sensitivity.
+- `tests/` — lightweight unit tests for pressure logic.
+- `data/raw/` — small competition metadata tables are included. The full competition data pack is not vendored in this public repository; see the setup instructions below.
+- `data/synthetic/`, `data/processed/`, `outputs/`, `models/` — generated when the pipeline is run. They are included in the downloadable project bundle.
+
+## Required source data
+
+Obtain the authorized SupeRR Selector data pack and place these files in `data/raw/`:
+
+- `ball_by_ball.csv` or `ball_by_ball.csv.gz`
+- `matches.csv`
+- `competitions.csv`
+- `teams.csv`
+- `playing_eleven.csv`
+- `competition_team_player_mapping.csv`
+
+The three small metadata CSVs (`matches.csv`, `competitions.csv`, and `teams.csv`) are included as convenience copies. The ball-by-ball, playing-XI and player-mapping files are not committed to the public repo. Do not redistribute competition data unless its terms permit it.
 
 ## Setup
 
@@ -21,14 +33,14 @@ Python 3.10–3.13 is expected.
 ```bash
 python -m venv .venv
 # Windows
-.venv\Scripts\activate
+.venv\\Scripts\\activate
 # macOS/Linux
 source .venv/bin/activate
 
 pip install -r requirements.txt
 ```
 
-## Run the complete analysis
+## Run the analysis
 
 From the repository root:
 
@@ -36,21 +48,19 @@ From the repository root:
 python run_analysis.py
 ```
 
-This rebuilds the processed state table, synthetic dataset, model, diagnostic metrics, comparison CSVs and PNG charts under `data/processed/`, `data/synthetic/`, `models/` and `outputs/`.
+This builds delivery-level match states, PI features, synthetic scenarios, the XGBoost classifier, comparisons, CSV outputs, metric JSON files and PNG charts.
 
-Then open the notebook:
+Open the notebook:
 
 ```bash
 jupyter lab notebooks/SupeRR_Pressure_Modelling_Comparison.ipynb
 ```
 
-Or launch the dashboard:
+Launch the dashboard after running the pipeline:
 
 ```bash
 streamlit run dashboard/app.py
 ```
-
-The dashboard expects `python run_analysis.py` to have been run first.
 
 ## Pressure Index v1 — hand-designed baseline
 
@@ -64,29 +74,30 @@ The dashboard expects `python run_analysis.py` to have been run first.
 | Target difficulty | 7.5% | First-innings target percentile within format/season |
 | Match stakes | 7.5% | Stage/knockout heuristic from supplied match metadata |
 
-The components are combined as a weighted average and multiplied by 100. The death-over feature adds a deliberate last-five-overs stress signal; it is related to overall time urgency, so sensitivity tests are included to monitor potential double-counting.
+Death-over pressure overlaps conceptually with overall time urgency; sensitivity analysis is included to show how much that design choice affects scores.
 
 ## Synthetic XGBoost experiment
 
-The synthetic generator samples plausible chase states (RRR, wickets, balls, recent run rate, target difficulty, match stakes and format), creates a **declared nonlinear teacher score with interactions and small noise**, then bins it into Low / Moderate / High / Extreme classes. XGBoost is trained on 78% and evaluated on a stratified 22% holdout. Predicted class probabilities are converted into an expected score using class midpoints `[15, 45, 70, 90]`.
+The generator samples plausible chase states, creates a declared nonlinear teacher score with interactions and small noise, and bins it into Low / Moderate / High / Extreme classes. XGBoost is trained on 78% and evaluated on a stratified 22% holdout. The hand-designed PI baseline is evaluated on the exact same synthetic holdout.
 
-The synthetic model is intentionally an experiment in learning a more flexible decision surface. It is not trained on genuine labels and must not be called a learned ground-truth pressure model.
+XGBoost's stronger synthetic metrics are expected because the synthetic teacher includes nonlinear interactions that a fixed weighted sum cannot reproduce. This is a controlled algorithm experiment—not evidence that XGBoost is more valid for real cricket.
 
-## Important dataset limitations
+## Important limitations
 
-1. `extras1_runs` is a categorical code in the supplied file, not a numeric run count. The pack does not fully disambiguate bye/legbye run values. The code therefore creates provisional innings totals and flags **3,166 unresolved bye/legbye deliveries** in the selected source data. Reconcile totals against official scorecards before relying on rankings or final results.
-2. Tournament standings/points tables are not included. The project does **not** claim to know whether an ordinary group-stage match was mathematically must-win. `match_stakes` is only a transparent stage/knockout proxy; exact must-win status remains unavailable.
-3. Some first/second innings may be shortened or affected by revised targets/overs. Revised fields are applied when present, but the source data still needs independent scorecard validation.
-4. Player summaries are descriptive pressure exposure views, not final player rankings. Bowler run-concession metrics remain provisional where byes/legbyes are unresolved.
-5. Historical PI–XGBoost correlation is model agreement only. It is not a validation metric because there is no independent pressure ground truth in the supplied data.
+1. The supplied `extras1_runs` field appears to be a categorical code, not numeric runs. Bye/legbye run values are unresolved for 3,166 deliveries in the selected innings. Reconcile reconstructed innings totals against official scorecards before trusting the downstream chase states.
+2. Tournament points tables are not part of the pack. The project does not claim to identify mathematically must-win group matches; match stakes are a transparent stage/knockout proxy only.
+3. Revised overs and targets are applied where available, but shortened innings and score reconstruction still need scorecard validation.
+4. Player pressure summaries are descriptive comparisons, not final top-10 rankings.
+5. No independent pressure ground-truth labels exist. Historical PI–XGBoost correlation is agreement, not validation.
+6. The synthetic holdout classification report measures fidelity to our chosen synthetic rule and should never be presented as real-match predictive performance.
 
-## Recommended next research steps
+## Next research steps
 
-- Reconcile reconstructed innings totals against official scorecards.
-- Add points tables and qualification rules to derive true must-win scenarios.
-- Build a separate historical win-probability model from match outcomes (grouped by match and tested chronologically). Do not reuse synthetic labels for this.
-- Validate PI monotonicity, match-level stability, player ranking stability and season/competition transfer before producing final top-10s.
+- Reconcile scores and extras against official scorecards.
+- Add tournament standings and qualification rules to derive genuine must-win states.
+- Train a separate historical win-probability model on outcomes, grouped by match and evaluated chronologically.
+- Assess PI monotonicity, match/season stability, sensitivity and player-ranking stability before submitting final rankings.
 
 ## Reproducibility
 
-The default random seed is `42`. Run `python run_analysis.py` to regenerate the synthetic data and model deterministically (subject to library/platform version differences). `outputs/metrics/experiment_metrics.json` records the latest run metrics.
+The default random seed is `42`. Run `python run_analysis.py` to regenerate all analysis outputs. Detailed results are written to `outputs/metrics/experiment_metrics.json`.
