@@ -24,4 +24,4 @@ jobs:
       - name: Compile Python source
         run: python -m compileall -q cricket_pressure dashboard run_analysis.py
       - name: Run unit tests
-        run: pytest -q
+        run: python -m pytest -q
