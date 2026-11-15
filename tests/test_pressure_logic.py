@@ -170,3 +170,115 @@ def test_180_day_half_life_reduces_two_year_old_match_to_about_six_percent():
     assert np.isclose(weights.iloc[0], expected_old_weight, atol=1e-9)
     assert np.isclose(weights.iloc[1], 1.0)
     assert str(reference.date()) == "2026-11-15"
+
+
+
+def test_rrf_weights_are_deliberately_unequal_and_sum_to_one():
+    from cricket_pressure.player_rankings import DEFAULT_RRF_WEIGHTS
+
+    assert np.isclose(sum(DEFAULT_RRF_WEIGHTS.values()), 1.0)
+    assert len(set(DEFAULT_RRF_WEIGHTS.values())) == len(DEFAULT_RRF_WEIGHTS)
+    assert DEFAULT_RRF_WEIGHTS["PI baseline"] > DEFAULT_RRF_WEIGHTS["XGBoost"]
+
+
+def test_weighted_rrf_combines_model_ranks_and_requires_model_support():
+    from cricket_pressure.player_rankings import (
+        DEFAULT_RRF_WEIGHTS,
+        build_weighted_rrf_ensemble,
+    )
+
+    score_by_method = {
+        "PI baseline": {1: 100, 2: 90, 3: 80, 4: 70},
+        "PI RRR-heavy": {2: 100, 1: 90, 3: 80, 4: 70},
+        "PI momentum-heavy": {3: 100, 2: 90, 1: 80},
+        "PI stakes-heavy": {1: 100, 3: 90, 2: 80},
+        "XGBoost": {3: 100, 2: 90, 1: 80},
+    }
+    rows = []
+    for method, players in score_by_method.items():
+        for player_id, score in players.items():
+            rows.append({
+                "player_id": player_id,
+                "player_name": f"Player {player_id}",
+                "role": "Batter",
+                "scoring_method": method,
+                "half_life": "180d",
+                "shrunk_per_100": float(score),
+                "pressure_deliveries": 120,
+                "pressure_matches": 12,
+                "last_pressure_match_date": pd.Timestamp("2026-11-01", tz="UTC"),
+                "days_since_last_pressure_match": 10.0,
+            })
+    rankings = pd.DataFrame(rows)
+
+    ensemble = build_weighted_rrf_ensemble(
+        rankings,
+        min_deliveries=100,
+        min_matches=10,
+        half_life="180d",
+        max_days_since_last_match=365,
+        min_model_support=3,
+    )
+
+    # Player 4 appears in only two model lists and is excluded.
+    assert 4 not in set(ensemble["player_id"])
+    assert ensemble["model_support"].min() >= 3
+
+    # Weighted RRF is deterministic and, for these deliberately constructed
+    # rankings, Player 1 narrowly outranks Player 2.
+    assert ensemble.iloc[0]["player_id"] == 1
+    player_1 = ensemble.set_index("player_id").loc[1]
+    expected = (
+        DEFAULT_RRF_WEIGHTS["PI baseline"] / (60 + 1)
+        + DEFAULT_RRF_WEIGHTS["PI RRR-heavy"] / (60 + 2)
+        + DEFAULT_RRF_WEIGHTS["PI momentum-heavy"] / (60 + 3)
+        + DEFAULT_RRF_WEIGHTS["PI stakes-heavy"] / (60 + 1)
+        + DEFAULT_RRF_WEIGHTS["XGBoost"] / (60 + 3)
+    )
+    assert np.isclose(player_1["rrf_score"], expected)
+    assert player_1["model_support"] == 5
+    assert player_1["model_weight_coverage"] == 1.0
+    assert player_1["ensemble_rank"] == 1
+
+
+def test_weighted_rrf_applies_sample_and_activity_gates_per_model():
+    from cricket_pressure.player_rankings import build_weighted_rrf_ensemble
+
+    rows = []
+    for method in [
+        "PI baseline", "PI RRR-heavy", "PI momentum-heavy",
+        "PI stakes-heavy", "XGBoost",
+    ]:
+        rows.extend([
+            {
+                "player_id": 1, "player_name": "Eligible",
+                "role": "Batter", "scoring_method": method, "half_life": "180d",
+                "shrunk_per_100": 120.0, "pressure_deliveries": 150,
+                "pressure_matches": 15, "last_pressure_match_date": pd.Timestamp("2026-11-01", tz="UTC"),
+                "days_since_last_pressure_match": 10.0,
+            },
+            {
+                "player_id": 2, "player_name": "Thin sample",
+                "role": "Batter", "scoring_method": method, "half_life": "180d",
+                "shrunk_per_100": 300.0, "pressure_deliveries": 20,
+                "pressure_matches": 3, "last_pressure_match_date": pd.Timestamp("2026-11-01", tz="UTC"),
+                "days_since_last_pressure_match": 10.0,
+            },
+            {
+                "player_id": 3, "player_name": "Inactive",
+                "role": "Batter", "scoring_method": method, "half_life": "180d",
+                "shrunk_per_100": 250.0, "pressure_deliveries": 150,
+                "pressure_matches": 15, "last_pressure_match_date": pd.Timestamp("2024-01-01", tz="UTC"),
+                "days_since_last_pressure_match": 1000.0,
+            },
+        ])
+
+    ensemble = build_weighted_rrf_ensemble(
+        pd.DataFrame(rows),
+        min_deliveries=100,
+        min_matches=10,
+        half_life="180d",
+        max_days_since_last_match=365,
+        min_model_support=3,
+    )
+    assert ensemble["player_id"].tolist() == [1]
