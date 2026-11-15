@@ -392,7 +392,18 @@ def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int =
         lambda s: pd.cut(s, [-.001, 30, 60, 80, 100], labels=CLASS_NAMES)
     )
     class_comparison = pd.crosstab(real["pressure_category"], real["xgb_pressure_class"], dropna=False)
-    player_comparison = _player_summary(real)
+    # Player rankings compare high-pressure performance under several PI weightings and XGBoost.
+    player_comparison = _player_summary(real)  # full-sample exposure reference; descriptive only
+    player_rankings = build_player_rankings(real)
+    player_top10 = compare_top10_rankings(player_rankings, top_n=10)
+    match_disagreements, delivery_disagreements = _build_match_disagreements(real)
+    innings_validation, score_audit = _build_score_audit(states)
+
+    # Independent historical outcome benchmark: actual chase-side win/loss labels,
+    # grouped chronologically by match. This is not trained on synthetic pressure labels.
+    outcome_model, outcome_metrics, outcome_predictions, outcome_calibration, outcome_importance = (
+        train_historical_win_probability(states, random_state=seed)
+    )
     match_summary = real.groupby(["match_format", "season"], dropna=False).agg(
         pressure_deliveries=("match_id", "size"),
         matches=("match_id", "nunique"),
@@ -403,7 +414,7 @@ def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int =
     ).reset_index()
     scenario_lab = _build_scenario_lab(model)
 
-    synthetic_metrics_out = {k: v for k, v in synthetic_metrics.items() if k not in {"xgb_classification_report", "pi_classification_report", "confusion_matrix"}}
+    synthetic_metrics_out = {k: v for k, v in synthetic_metrics.items() if k not in {"xgb_classification_report", "pi_classification_report"}}
     synthetic_metrics_out["real_state_count"] = int(len(real))
     synthetic_metrics_out["real_match_count"] = int(real["match_id"].nunique())
     synthetic_metrics_out["real_pi_xgb_spearman"] = real_corr
@@ -426,6 +437,19 @@ def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int =
     sensitivity.to_csv(dirs["outputs"] / "weight_sensitivity.csv", index=False)
     scenario_lab.to_csv(dirs["outputs"] / "scenario_lab.csv", index=False)
     extras["importance"].to_csv(dirs["outputs"] / "xgb_feature_importance.csv", index=False)
+    player_rankings.to_csv(dirs["outputs"] / "player_rankings.csv", index=False)
+    player_top10.to_csv(dirs["outputs"] / "player_top10_comparison.csv", index=False)
+    match_disagreements.to_csv(dirs["outputs"] / "match_disagreement_summary.csv", index=False)
+    delivery_disagreements.to_csv(dirs["outputs"] / "delivery_disagreements.csv", index=False)
+    innings_validation.to_csv(dirs["outputs"] / "innings_validation.csv", index=False)
+    score_audit.to_csv(dirs["outputs"] / "score_reconciliation_audit.csv", index=False)
+    outcome_predictions.to_csv(dirs["processed"] / "historical_win_probability_predictions.csv.gz", index=False, compression="gzip")
+    outcome_calibration.to_csv(dirs["outputs"] / "historical_win_probability_calibration.csv", index=False)
+    outcome_importance.to_csv(dirs["outputs"] / "historical_win_probability_feature_importance.csv", index=False)
+    np.savetxt(dirs["metrics"] / "synthetic_xgb_confusion_matrix.csv",
+               np.asarray(synthetic_metrics["confusion_matrix"], dtype=int), delimiter=",", fmt="%d")
+    with open(dirs["metrics"] / "historical_win_probability_metrics.json", "w", encoding="utf-8") as f:
+        json.dump(_json_safe(outcome_metrics), f, indent=2)
     with open(dirs["metrics"] / "experiment_metrics.json", "w", encoding="utf-8") as f:
         json.dump(_json_safe(synthetic_metrics_out), f, indent=2)
     with open(dirs["metrics"] / "synthetic_xgb_classification_report.json", "w", encoding="utf-8") as f:
@@ -433,7 +457,9 @@ def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int =
     with open(dirs["metrics"] / "synthetic_pi_classification_report.json", "w", encoding="utf-8") as f:
         json.dump(_json_safe(synthetic_metrics["pi_classification_report"]), f, indent=2)
     model.save_model(dirs["models"] / "synthetic_pressure_xgb.json")
+    outcome_model.save_model(dirs["models"] / "historical_win_probability_xgb.json")
     _plot_outputs(synthetic_test, synthetic_metrics, extras["importance"], real, sensitivity, dirs)
+    _plot_extra_diagnostics(outcome_calibration, match_disagreements, player_rankings, dirs)
 
     summary = {
         "selected_matches": int(states["match_id"].nunique()),
@@ -449,6 +475,11 @@ def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int =
         "real_pi_xgb_pearson": real_pearson,
         "mean_pi": float(real["pressure_index"].mean()),
         "mean_xgb_synthetic_score": float(real["xgb_pressure_score"].mean()),
+        "score_audit_run_margin_comparable_matches": int(score_audit["run_margin_audit_eligible"].sum()),
+        "score_audit_run_margin_consistent_matches": int(score_audit["run_margin_audit_status"].eq("consistent with reported margin").sum()),
+        "score_audit_unresolved_extra_matches": int(score_audit["unresolved_extra_deliveries"].gt(0).sum()),
+        "innings_over_schedule_count": int(innings_validation["legal_balls_over_schedule"].sum()),
+        "historical_win_probability": outcome_metrics,
     }
     with open(dirs["metrics"] / "run_summary.json", "w", encoding="utf-8") as f:
         json.dump(_json_safe(summary), f, indent=2)
@@ -458,6 +489,10 @@ def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int =
         "synthetic": synthetic, "synthetic_test": synthetic_test,
         "synthetic_metrics": synthetic_metrics, "importance": extras["importance"],
         "sensitivity": sensitivity, "class_comparison": class_comparison,
-        "players": player_comparison, "scenario_lab": scenario_lab,
-        "summary": summary,
+        "players": player_comparison, "player_rankings": player_rankings,
+        "player_top10": player_top10, "scenario_lab": scenario_lab,
+        "match_disagreements": match_disagreements, "delivery_disagreements": delivery_disagreements,
+        "innings_validation": innings_validation, "score_audit": score_audit,
+        "outcome_metrics": outcome_metrics, "outcome_predictions": outcome_predictions,
+        "outcome_calibration": outcome_calibration, "summary": summary,
     }
