@@ -96,6 +96,7 @@ def train_historical_win_probability(
     states: pd.DataFrame,
     random_state: int = 42,
     train_fraction: float = 0.80,
+    recency_half_life_days: int | None = None,
 ) -> tuple[XGBClassifier, dict, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Fit a separate model to actual chase outcomes with chronological match holdout.
 
@@ -143,8 +144,29 @@ def train_historical_win_probability(
     X_test = X_test.replace([np.inf, -np.inf], np.nan)
     y_train = train["batting_team_won"].astype(int)
     y_test = test["batting_team_won"].astype(int)
-    w_train = _match_balanced_weights(train)
+    w_train_match = _match_balanced_weights(train)
     w_test = _match_balanced_weights(test)
+
+    # Recency weights are computed from training dates only. The latest training
+    # date is the anchor; the future holdout is never used to set training weights.
+    recency_reference_date = train["match_date"].max()
+    if recency_half_life_days is None:
+        recency_train = np.ones(len(train), dtype=float)
+        half_life_label = "unweighted"
+    else:
+        if recency_half_life_days <= 0:
+            raise ValueError("recency_half_life_days must be positive or None")
+        train_age_days = (
+            recency_reference_date - train["match_date"]
+        ).dt.total_seconds().to_numpy() / 86400.0
+        recency_train = np.power(
+            2.0, -np.clip(train_age_days, 0, None) / float(recency_half_life_days)
+        )
+        half_life_label = f"{recency_half_life_days}d"
+
+    w_train = w_train_match * recency_train
+    # Normalize the mean train weight to one to keep XGBoost regularization scale comparable.
+    w_train = w_train / max(float(np.mean(w_train)), 1e-12)
 
     model = XGBClassifier(
         n_estimators=350,
@@ -171,12 +193,17 @@ def train_historical_win_probability(
         "target_definition": "Second-innings batting team eventually won the match.",
         "split_method": "chronological by match_date; all deliveries from each match stay in one partition",
         "train_fraction_by_matches": float(train_fraction),
+        "recency_half_life": half_life_label,
+        "recency_reference_date_utc": recency_reference_date.isoformat(),
+        "mean_train_recency_weight": float(np.mean(recency_train)),
+        "min_train_recency_weight": float(np.min(recency_train)),
+        "max_train_recency_weight": float(np.max(recency_train)),
         "cutoff_date_utc": cutoff.isoformat(),
         "train_matches": int(train["match_id"].nunique()),
         "test_matches": int(test["match_id"].nunique()),
         "train_deliveries": int(len(train)),
         "test_deliveries": int(len(test)),
-        "train_win_rate_match_weighted": prior,
+        "train_win_rate_match_and_recency_weighted": prior,
         "test_win_rate_match_weighted": float(np.average(y_test, weights=w_test)),
         "accuracy_match_weighted": float(accuracy_score(y_test, predicted, sample_weight=w_test)),
         "brier_score_match_weighted": float(brier_score_loss(y_test, probabilities, sample_weight=w_test)),
@@ -203,6 +230,7 @@ def train_historical_win_probability(
     predictions["win_probability"] = probabilities
     predictions["predicted_batting_team_won"] = predicted
     predictions["match_sample_weight"] = w_test
+    predictions["training_recency_half_life"] = half_life_label
 
     calibration = _calibration_table(y_test.to_numpy(), probabilities, w_test, test["match_id"].to_numpy())
     importance = pd.DataFrame({
