@@ -977,7 +977,8 @@ with tabs[11]:
     with submission_tab:
         st.caption(
             "Competition rankings use the supplied IPL + T20I data. Each PI variant is ranked independently, "
-            "then combined through weighted Reciprocal Rank Fusion."
+            "then combined through weighted Reciprocal Rank Fusion. Defaults: 50 pressure balls, 5 matches, "
+            "support from 3 methods, 365-day activity window; a 100-delivery prior shrinks small samples."
         )
         rankings = data["rankings"]
         if rankings.empty:
@@ -987,9 +988,9 @@ with tabs[11]:
             with c1:
                 final_half_life = st.selectbox("Recency horizon", ["365d", "540d", "180d", "730d", "unweighted"], index=0, key="final_rrf_half_life")
             with c2:
-                final_min_balls = st.number_input("Minimum pressure balls", 0, 10000, 100, 10, key="final_rrf_min_balls")
+                final_min_balls = st.number_input("Minimum pressure balls", 0, 10000, 50, 10, key="final_rrf_min_balls")
             with c3:
-                final_min_matches = st.number_input("Minimum matches", 0, 1000, 10, 1, key="final_rrf_min_matches")
+                final_min_matches = st.number_input("Minimum matches", 0, 1000, 5, 1, key="final_rrf_min_matches")
             with c4:
                 final_min_support = st.number_input("Minimum model support", 1, 5, 3, 1, key="final_rrf_min_support")
             with c5:
