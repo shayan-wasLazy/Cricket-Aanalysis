@@ -201,12 +201,14 @@ git pull --ff-only origin main
 
 The `dataset/README.md` file is tracked, but all other files inside `dataset/` are ignored. Therefore your local source CSVs stay on your machine during a normal pull. Generated files under `outputs/`, `models/`, `data/processed/` and `data/synthetic/` are also ignored.
 
-After pulling new analysis code, regenerate outputs and relaunch the dashboard:
+After pulling ranking-recency changes, refresh the player tables from the already processed delivery data and relaunch the dashboard:
 
 ```bash
-python run_analysis.py
+python refresh_player_rankings.py
 streamlit run dashboard/app.py
 ```
+
+This standalone refresh uses `data/processed/real_pressure_comparison.csv.gz` and does **not** retrain the synthetic or historical outcome models. Run `python run_analysis.py` only when the processed delivery data is missing or you have replaced/updated the source CSVs.
 
 Do **not** run `git clean -fdx` in this project: that command also deletes ignored files, including your local `dataset/` CSVs and generated analysis artifacts.
 
