@@ -47,3 +47,22 @@ git status --short
 The first command should print the file path. Dataset files should not appear as untracked files in `git status`.
 
 **Data handling:** these are competition-provided files. Keep them local unless the competition's terms explicitly allow redistribution. The project code and notebook can be pushed without pushing the data.
+
+
+## Rajasthan Royals Squad Intelligence data (separate from the competition pack)
+
+The RR analysis uses Cricsheet's IPL JSON archive rather than the six SupeRR Selector CSV files. The script downloads the archive to this ignored local path:
+
+dataset/rr_intelligence/ipl_json.zip
+
+Run from the repository root:
+
+python scripts/build_rr_intelligence.py --download --start-year 2022 --end-year 2026
+
+Alternatively, provide an already-downloaded ZIP or extracted JSON directory with --source PATH. Generated RR reports, delivery extracts and player-fit rankings are stored in outputs/rr_intelligence/ and remain ignored by Git.
+
+Source: https://cricsheet.org/  
+JSON format: https://cricsheet.org/format/json/  
+Licence and attribution: https://cricsheet.org/licensing/
+
+The source archive and competition-provided files are not committed. Preserve Cricsheet's ODC-By attribution and licence obligations if publishing derived data.

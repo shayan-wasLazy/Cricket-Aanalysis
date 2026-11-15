@@ -284,3 +284,52 @@ Generated files:
 
 
 **Chronological model leakage guard:** the historical win-probability model excludes the season-wide target percentile and season-baseline-filled recent run-rate/momentum features, because those were computed using all matches in a season and could indirectly expose future match information to earlier training rows. The outcome model uses only pre-delivery state variables plus match metadata available before play.
+
+
+## Rajasthan Royals Squad Intelligence
+
+A separate RR-specific module analyses Rajasthan Royals match situations and builds role/phase candidate shortlists from the wider IPL player pool. It does not alter the competition's primary pressure Top-10 rankings.
+
+### Data source and local setup
+
+The ingestion script uses Cricsheet's IPL JSON archive:
+
+- Download: https://cricsheet.org/downloads/ipl_json.zip
+- Format documentation: https://cricsheet.org/format/json/
+- Licence and attribution: https://cricsheet.org/licensing/
+
+Download and build the local report for IPL seasons 2022–2026:
+
+python scripts/build_rr_intelligence.py --download --start-year 2022 --end-year 2026
+
+The archive is saved to dataset/rr_intelligence/ipl_json.zip. It is local-only: dataset files are ignored by Git. Generated outputs are written under outputs/rr_intelligence/, which is also ignored. Do not upload the archive or generated match data unless the applicable licence and competition terms permit it.
+
+### Analytical tracks
+
+1. **RR match diagnostics:** filter matches involving Rajasthan Royals and reconstruct every delivery, including runs, extras, legal balls, wickets, target, score, required rate and remaining resources.
+2. **Pressure points:** batter pressure uses a chase-state index based on required rate, wickets lost, time elapsed and recent scoring shortfall. Bowling pressure is a separate role-specific index that reflects scoring threat, wickets in hand, time elapsed and chase control. These are transparent heuristics, not psychological ground truth.
+3. **Turning-point windows:** aggregate high-pressure deliveries by match and phase to locate periods where the chase was under strain or the bowling side was conceding control.
+4. **RR phase gaps:** compare RR batting and bowling performance in Powerplay, Middle and Death phases against the rest of the selected IPL data.
+5. **Player fit:** rank all-IPL player profiles within role and phase. Batters are assessed using strike rate, boundary rate, dismissal rate and pressure scoring; bowlers use economy, wickets, dots and pressure economy. The fit score combines player performance with the measured RR phase need.
+
+### Generated files
+
+- outputs/rr_intelligence/rr_match_summary.csv
+- outputs/rr_intelligence/rr_pressure_points.csv
+- outputs/rr_intelligence/rr_bowling_pressure_points.csv
+- outputs/rr_intelligence/rr_pressure_windows.csv
+- outputs/rr_intelligence/rr_phase_gaps.csv
+- outputs/rr_intelligence/rr_player_fit_shortlist.csv
+- outputs/rr_intelligence/rr_intelligence_report.md
+- outputs/rr_intelligence/rr_deliveries.csv.gz and all_ipl_deliveries.csv.gz
+
+The Streamlit dashboard contains an **RR squad intelligence** tab after the RRF shortlist.
+
+### Interpretation limits
+
+- Chase pressure can be calculated only where a valid target exists. DLS games without an explicit revised target are excluded from pressure scoring.
+- First-innings deliveries remain useful for general role/phase player baselines but are not assigned a chase pressure score.
+- The batter and bowler pressure formulas are separate heuristics. Their scores should not be interpreted as comparable psychological measurements.
+- Candidate player scores are relative, within-role and within-phase performance percentiles; they are not absolute quality ratings.
+- The candidate shortlist does not establish 2027 auction availability, retention status, overseas-slot fit, expected price or squad balance. Join it to an authoritative auction/retention list before making acquisition recommendations.
+- Preserve Cricsheet attribution and comply with its ODC-By licence when redistributing derived data.

@@ -68,6 +68,13 @@ def load_data():
         "outcome_recency": _read_optional(OUT / "historical_win_probability_recency_comparison.csv"),
         "outcome_importance": _read_optional(OUT / "historical_win_probability_feature_importance.csv"),
         "outcome_predictions": _read_optional(ROOT / "data" / "processed" / "historical_win_probability_predictions.csv.gz"),
+        "rr_matches": _read_optional(OUT / "rr_intelligence" / "rr_match_summary.csv"),
+        "rr_pressure_points": _read_optional(OUT / "rr_intelligence" / "rr_pressure_points.csv"),
+        "rr_bowling_pressure_points": _read_optional(OUT / "rr_intelligence" / "rr_bowling_pressure_points.csv"),
+        "rr_pressure_windows": _read_optional(OUT / "rr_intelligence" / "rr_pressure_windows.csv"),
+        "rr_phase_gaps": _read_optional(OUT / "rr_intelligence" / "rr_phase_gaps.csv"),
+        "rr_player_fit": _read_optional(OUT / "rr_intelligence" / "rr_player_fit_shortlist.csv"),
+
     }
 
 @st.cache_resource(show_spinner=False)
@@ -140,7 +147,7 @@ with right:
 tabs = st.tabs([
     "Synthetic diagnostics", "Scenario playground", "Weight lab",
     "Match disagreement", "Player rankings", "Historical win model", "Score audit", "Recency analysis",
-    "RRF ensemble shortlist",
+    "RRF ensemble shortlist", "RR squad intelligence",
 ])
 
 with tabs[0]:
@@ -687,6 +694,107 @@ with tabs[8]:
                 "Use this shortlist to inspect evidence and role fit before choosing your final ten. "
                 "RRF measures cross-model ranking agreement; it is not itself a measure of player quality or pressure uplift."
             )
+
+
+
+with tabs[9]:
+    st.subheader("Rajasthan Royals — squad intelligence")
+    st.caption(
+        "RR match diagnostics are measured against the rest of the IPL player pool. "
+        "Candidate scores are role/phase percentiles, not auction availability or a final bid recommendation."
+    )
+    rr_matches = data["rr_matches"]
+    rr_batting_pressure = data["rr_pressure_points"]
+    rr_bowling_pressure = data["rr_bowling_pressure_points"]
+    rr_windows = data["rr_pressure_windows"]
+    rr_gaps = data["rr_phase_gaps"]
+    rr_fit = data["rr_player_fit"]
+
+    if rr_matches.empty or rr_gaps.empty:
+        st.info("RR intelligence outputs are not available yet. Download and process the Cricsheet IPL archive.")
+        st.code(
+            "python scripts/build_rr_intelligence.py --download --start-year 2022 --end-year 2026",
+            language="bash",
+        )
+    else:
+        deliveries_count = int(rr_matches[[
+            "innings_1_legal_balls", "innings_2_legal_balls"
+        ]].fillna(0).to_numpy().sum()) if {
+            "innings_1_legal_balls", "innings_2_legal_balls"
+        }.issubset(rr_matches.columns) else 0
+        q1, q2, q3, q4 = st.columns(4)
+        q1.metric("RR matches", f"{len(rr_matches):,}")
+        q2.metric("RR legal deliveries", f"{deliveries_count:,}")
+        q3.metric("High batter-pressure balls", f"{len(rr_batting_pressure):,}")
+        q4.metric("High bowler-pressure balls", f"{len(rr_bowling_pressure):,}")
+
+        st.markdown("#### RR phase gaps vs the rest of IPL")
+        gap_cols = [
+            "role", "phase", "team_need_score", "rr_balls",
+            "rr_strike_rate", "league_strike_rate",
+            "rr_economy", "league_economy",
+        ]
+        gap_cols = [c for c in gap_cols if c in rr_gaps.columns]
+        st.dataframe(
+            rr_gaps[gap_cols].sort_values("team_need_score", ascending=False),
+            use_container_width=True, hide_index=True,
+        )
+        st.caption(
+            "Need score is a transparent heuristic based on phase-specific batting strike rate, "
+            "dismissal/boundary rates or bowling economy, wicket and dot-ball rates. Inspect raw rates and samples."
+        )
+
+        st.markdown("#### Candidate fit by role and phase")
+        f1, f2 = st.columns(2)
+        with f1:
+            fit_role = st.selectbox("Candidate role", ["Batter", "Bowler"], key="rr_fit_role")
+        with f2:
+            fit_phase = st.selectbox("Target phase", ["Powerplay", "Middle", "Death"], key="rr_fit_phase")
+        candidates = rr_fit.loc[
+            rr_fit["role"].eq(fit_role) & rr_fit["phase"].eq(fit_phase)
+        ].sort_values("auction_fit_score", ascending=False) if not rr_fit.empty else pd.DataFrame()
+        if candidates.empty:
+            st.warning("No candidate profiles found for this role and phase.")
+        else:
+            cols = [
+                "player_name", "franchises", "auction_fit_score", "player_fit_score",
+                "rr_team_need_score", "deliveries", "matches", "pressure_deliveries",
+                "pressure_sample_adequate", "availability_status",
+            ]
+            cols = [c for c in cols if c in candidates.columns]
+            st.dataframe(candidates[cols].head(20), use_container_width=True, hide_index=True)
+        st.warning(
+            "This is a performance-fit shortlist, not an auction-availability list. "
+            "Before recommending a purchase, join it to the official 2027 retention/auction pool, "
+            "then account for overseas slots, role balance, budget and likely price."
+        )
+
+        st.markdown("#### Highest-pressure RR chase windows")
+        if rr_windows.empty:
+            st.info("No chase windows crossed the current batting-pressure threshold.")
+        else:
+            st.dataframe(rr_windows.head(20), use_container_width=True, hide_index=True)
+        with st.expander("High-pressure batter deliveries"):
+            if rr_batting_pressure.empty:
+                st.write("No batting-pressure delivery rows.")
+            else:
+                st.dataframe(rr_batting_pressure.head(200), use_container_width=True, hide_index=True)
+        with st.expander("High-pressure bowling deliveries"):
+            if rr_bowling_pressure.empty:
+                st.write("No bowling-pressure delivery rows.")
+            else:
+                st.dataframe(rr_bowling_pressure.head(200), use_container_width=True, hide_index=True)
+        st.markdown("#### Recent RR match results")
+        match_cols = [
+            "match_date", "season", "rr_opponent", "rr_result", "winner",
+            "venue", "innings_1_runs", "innings_2_runs",
+        ]
+        match_cols = [c for c in match_cols if c in rr_matches.columns]
+        st.dataframe(
+            rr_matches[match_cols].sort_values("match_date", ascending=False).head(15),
+            use_container_width=True, hide_index=True,
+        )
+
 
 
 st.divider()
