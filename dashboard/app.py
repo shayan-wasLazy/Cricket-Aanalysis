@@ -78,10 +78,15 @@ def load_json(path: str):
     p = Path(path)
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
 
-@st.cache_data(show_spinner="Comparing pressure and lower-pressure player performance...")
-def load_final_selection(frame: pd.DataFrame, min_deliveries: int, min_matches: int):
+@st.cache_data(show_spinner="Scoring match-to-match pressure consistency...")
+def load_final_selection(
+    frame: pd.DataFrame, min_deliveries: int, min_matches: int, risk_penalty: float
+):
     return build_final_selection_candidates(
-        frame, min_deliveries=min_deliveries, min_matches=min_matches
+        frame,
+        min_deliveries=min_deliveries,
+        min_matches=min_matches,
+        risk_penalty=risk_penalty,
     )
 
 data = load_data()
@@ -504,24 +509,24 @@ with tabs[6]:
 with tabs[8]:
     st.subheader("Final Selection Lab")
     st.caption(
-        "Ranks players by how much better they perform in high-pressure chase states than in their own "
-        "lower-pressure chase states. The comparison is matched within the player's format and season."
+        "Ranks players on repeatable performance in high-pressure chase deliveries. "
+        "It does not rank players by improvement over their own baseline."
     )
 
-    control_1, control_2, control_3 = st.columns(3)
+    control_1, control_2, control_3, control_4 = st.columns(4)
     with control_1:
         final_min_deliveries = st.number_input(
-            "Minimum pressure and baseline deliveries", min_value=25, max_value=5000,
+            "Minimum pressure deliveries", min_value=25, max_value=5000,
             value=100, step=25, key="final_min_deliveries",
         )
     with control_2:
         final_min_matches = st.number_input(
-            "Minimum pressure and baseline matches", min_value=3, max_value=1000,
+            "Minimum pressure matches", min_value=3, max_value=1000,
             value=10, step=1, key="final_min_matches",
         )
     with control_3:
         final_half_life = st.selectbox(
-            "Recency setting for final selection",
+            "Recency setting",
             ["unweighted", "365d", "540d", "730d"], index=2,
             format_func=lambda x: {
                 "unweighted": "No decay", "365d": "365-day half-life",
@@ -529,44 +534,51 @@ with tabs[8]:
             }[x],
             key="final_half_life",
         )
+    with control_4:
+        risk_penalty = st.slider(
+            "Consistency penalty", min_value=0.0, max_value=2.0,
+            value=1.0, step=0.25, key="final_risk_penalty",
+            help="Higher values penalize match-to-match volatility more strongly.",
+        )
 
-    with st.expander("How the final selection is calculated", expanded=False):
+    with st.expander("How the consistency ranking works", expanded=False):
         st.markdown(
             """
-            1. **Pressure sample:** deliveries with the selected score at or above 60.
-            2. **Player baseline:** that same player's deliveries below 60, matched within the same
-               competition format and season. This is a lower-pressure *chase* baseline, not an
-               all-innings career average.
-            3. **Batter metric:** batter runs per 100 balls faced; wides are excluded from balls faced.
-               Dismissals per 100 balls are shown as a secondary guardrail.
-            4. **Bowler metric:** credited wickets per 100 legal balls. Economy rate is omitted because
-               unresolved bye/legbye values make conceded-run comparisons provisional.
-            5. **Stabilization:** pressure and baseline rates are separately shrunk toward their
-               role-wide rates using a 100-ball prior. Both sides must pass the delivery and match
-               sample gates.
-            6. **Consensus:** final rank is the median percentile across the four PI definitions
-               (baseline, RRR-heavy, momentum-heavy and stakes-heavy). A player must qualify under at
-               least three of those four definitions.
-            7. **XGBoost:** displayed only as a sensitivity comparison. It learns synthetic labels and
-               is not included in the consensus or treated as independent pressure ground truth.
-
-            Recency weights are exponential half-lives anchored to the newest valid match date in the
-            dataset. The selected half-life changes performance weighting, not the raw sample gates.
+            - **Pressure sample:** deliveries with the selected scoring method at or above 60.
+            - **Batter primary metric:** runs per 100 balls faced (strike-rate scale); wides are excluded
+              from balls faced. Dismissals per 100 balls faced are shown as a secondary indicator.
+            - **Bowler primary metric:** dot-ball percentage on known legal deliveries. Rows with
+              unresolved bye/legbye run values are excluded from the dot-ball denominator. Credited
+              wickets per 100 legal balls are shown separately.
+            - **Match consistency:** calculate each player's pressure performance separately in each
+              match, then calculate a recency- and exposure-weighted mean and standard deviation.
+            - **Reliability adjustment:** shrink the mean toward the role-wide pressure rate using a
+              five-effective-match prior, then subtract the selected number of standard errors.
+              Strong repeatable performances score well; volatile results and low effective samples
+              are penalized.
+            - **Consensus:** the final order is the median percentile across four PI definitions
+              (baseline, RRR-heavy, momentum-heavy and stakes-heavy). At least three must support a
+              candidate. Synthetic-trained XGBoost is shown only as a diagnostic comparison.
+            
+            Half-lives are anchored to the latest valid match date in the dataset. The main sidebar's
+            format and season filters define the pool being compared.
             """
         )
 
-    selection = load_final_selection(view, int(final_min_deliveries), int(final_min_matches))
+    selection = load_final_selection(
+        view, int(final_min_deliveries), int(final_min_matches), float(risk_penalty)
+    )
     if selection.empty:
         st.warning(
-            "No comparable pressure/baseline samples are available under the current format and season filters. "
-            "Check the processed data and try a wider filter scope."
+            "No high-pressure player samples are available under the current format and season filters. "
+            "Check the processed data or widen the filters."
         )
     else:
         consensus = build_consensus_rankings(selection, min_methods=3)
         if consensus.empty:
             st.warning(
-                "No players currently qualify under at least three PI definitions and both pressure/baseline "
-                "sample gates. Do not lower the thresholds just to force a Top 10."
+                "No players qualify under at least three PI definitions and the selected sample gates. "
+                "Do not lower the thresholds just to force a Top 10."
             )
         else:
             selected_consensus = consensus.loc[consensus["half_life"].eq(final_half_life)].copy()
@@ -579,42 +591,41 @@ with tabs[8]:
             metric_4.metric("Bowler Top 10", f"{min(10, len(bowler_consensus))}/10")
 
             def _selection_columns(role_name: str):
-                role_rows = selected_consensus.loc[selected_consensus["role"].eq(role_name)].copy()
-                role_rows = role_rows.sort_values("consensus_rank")
+                role_rows = selected_consensus.loc[
+                    selected_consensus["role"].eq(role_name)
+                ].sort_values("consensus_rank")
                 top20 = role_rows.head(20)
                 top10 = role_rows.head(10)
+
                 st.markdown(f"#### Final ordered Top 10 — {role_name}s")
                 if top10.empty:
                     st.info(f"No eligible {role_name.lower()} candidates under the current sample gates.")
                 else:
-                    if role_name == "Batter":
-                        extra_cols = ["baseline_pi_pressure_dismissals_per_100",
-                                      "baseline_pi_normal_dismissals_per_100",
-                                      "baseline_pi_dismissal_rate_delta_per_100"]
-                    else:
-                        extra_cols = []
-                    final_cols = [
-                        "consensus_rank", "player_name", "baseline_pi_uplift_pct",
-                        "baseline_pi_pressure_rate", "baseline_pi_normal_rate",
+                    display_cols = [
+                        "consensus_rank", "player_name",
+                        "baseline_pi_consistency_score", "baseline_pi_mean_match_rate",
+                        "baseline_pi_std_match_rate", "baseline_pi_consistency_pct",
                         "baseline_pi_pressure_deliveries", "baseline_pi_pressure_matches",
-                        "methods_supported", *extra_cols, "explanation",
+                        "baseline_pi_effective_matches", "baseline_pi_secondary_rate",
+                        "methods_supported", "explanation",
                     ]
                     st.dataframe(
-                        top10[final_cols].rename(columns={
+                        top10[display_cols].rename(columns={
                             "consensus_rank": "Rank",
                             "player_name": "Player",
-                            "baseline_pi_uplift_pct": "PI baseline uplift (%)",
-                            "baseline_pi_pressure_rate": "Pressure rate / 100",
-                            "baseline_pi_normal_rate": "Lower-pressure rate / 100",
+                            "baseline_pi_consistency_score": "Consistency score",
+                            "baseline_pi_mean_match_rate": "Mean pressure-match rate",
+                            "baseline_pi_std_match_rate": "Match-rate standard deviation",
+                            "baseline_pi_consistency_pct": "Share of matches at/above pool rate",
                             "baseline_pi_pressure_deliveries": "Pressure deliveries",
                             "baseline_pi_pressure_matches": "Pressure matches",
+                            "baseline_pi_effective_matches": "Effective matches",
+                            "baseline_pi_secondary_rate": "Secondary rate",
                             "methods_supported": "PI methods supporting",
-                            "baseline_pi_pressure_dismissals_per_100": "Pressure dismissals / 100 balls",
-                            "baseline_pi_normal_dismissals_per_100": "Baseline dismissals / 100 balls",
-                            "baseline_pi_dismissal_rate_delta_per_100": "Dismissal-rate change / 100",
                         }),
                         use_container_width=True, hide_index=True,
                     )
+
                 st.markdown(f"#### Top 20 {role_name.lower()} candidates")
                 if top20.empty:
                     st.info("No candidates available.")
@@ -622,107 +633,164 @@ with tabs[8]:
                     st.dataframe(
                         top20[[
                             "consensus_rank", "player_name", "consensus_percentile",
-                            "baseline_pi_uplift_pct", "baseline_pi_pressure_rate",
-                            "baseline_pi_normal_rate", "baseline_pi_pressure_deliveries",
-                            "baseline_pi_pressure_matches", "baseline_pi_normal_deliveries",
-                            "baseline_pi_normal_matches", "methods_supported",
+                            "baseline_pi_consistency_score", "baseline_pi_mean_match_rate",
+                            "baseline_pi_std_match_rate", "baseline_pi_consistency_pct",
+                            "baseline_pi_pressure_deliveries", "baseline_pi_pressure_matches",
+                            "baseline_pi_effective_matches", "methods_supported",
                         ]].rename(columns={
                             "consensus_rank": "Consensus rank",
                             "player_name": "Player",
                             "consensus_percentile": "Median PI percentile",
-                            "baseline_pi_uplift_pct": "PI baseline uplift (%)",
-                            "baseline_pi_pressure_rate": "Pressure rate / 100",
-                            "baseline_pi_normal_rate": "Lower-pressure rate / 100",
+                            "baseline_pi_consistency_score": "Consistency score",
+                            "baseline_pi_mean_match_rate": "Mean pressure-match rate",
+                            "baseline_pi_std_match_rate": "Match-rate SD",
+                            "baseline_pi_consistency_pct": "Share of matches at/above pool rate",
                             "baseline_pi_pressure_deliveries": "Pressure deliveries",
                             "baseline_pi_pressure_matches": "Pressure matches",
-                            "baseline_pi_normal_deliveries": "Baseline deliveries",
-                            "baseline_pi_normal_matches": "Baseline matches",
+                            "baseline_pi_effective_matches": "Effective matches",
                             "methods_supported": "PI methods supporting",
                         }),
                         use_container_width=True, hide_index=True,
                     )
 
-                # Pairwise Top-10 overlap across all scoring methods, including synthetic XGBoost.
+                st.markdown(f"#### Top-10 and Top-20 overlap — {role_name.lower()}s")
                 method_names = [
                     name for name in ["PI baseline", "PI RRR-heavy", "PI momentum-heavy",
                                       "PI stakes-heavy", "XGBoost"]
                     if name in set(selection["scoring_method"])
                 ]
-                top_sets = {}
-                for method_name in method_names:
-                    method_rows = selection.loc[
-                        selection["role"].eq(role_name)
-                        & selection["half_life"].eq(final_half_life)
-                        & selection["scoring_method"].eq(method_name)
-                        & selection["eligible"]
-                    ].sort_values("uplift_pct", ascending=False)
-                    top_sets[method_name] = set(method_rows.head(10)["player_id"])
-                if method_names:
-                    overlap = pd.DataFrame(
-                        [[len(top_sets[a] & top_sets[b]) for b in method_names]
-                         for a in method_names],
-                        index=method_names, columns=method_names,
-                    )
-                    fig = px.imshow(
-                        overlap, text_auto=True, aspect="auto", zmin=0, zmax=10,
-                        color_continuous_scale="Blues",
-                        title=f"Top-10 overlap across scoring methods — {role_name.lower()}s",
-                        labels={"x": "Scoring method", "y": "Scoring method", "color": "Shared players"},
-                    )
-                    fig.update_layout(height=360, margin=dict(l=10, r=10, t=55, b=10))
-                    st.plotly_chart(fig, use_container_width=True)
+                for n in [10, 20]:
+                    top_sets = {}
+                    for method_name in method_names:
+                        method_rows = selection.loc[
+                            selection["role"].eq(role_name)
+                            & selection["half_life"].eq(final_half_life)
+                            & selection["scoring_method"].eq(method_name)
+                            & selection["eligible"]
+                        ].sort_values("consistency_score", ascending=False)
+                        top_sets[method_name] = set(method_rows.head(n)["player_id"])
+                    if method_names:
+                        overlap = pd.DataFrame(
+                            [[len(top_sets[a] & top_sets[b]) for b in method_names]
+                             for a in method_names],
+                            index=method_names, columns=method_names,
+                        )
+                        fig = px.imshow(
+                            overlap, text_auto=True, aspect="auto", zmin=0, zmax=n,
+                            color_continuous_scale="Blues",
+                            title=f"Top-{n} overlap across scoring methods",
+                            labels={"x": "Scoring method", "y": "Scoring method", "color": "Shared players"},
+                        )
+                        fig.update_layout(height=350, margin=dict(l=10, r=10, t=55, b=10))
+                        st.plotly_chart(fig, use_container_width=True)
 
             _selection_columns("Batter")
             _selection_columns("Bowler")
+
+            st.markdown("#### Search players")
+            player_query = st.text_input(
+                "Find a player by name",
+                placeholder="Start typing a batter or bowler name...",
+                key="final_player_search",
+            )
+            if player_query.strip():
+                matches = selection.loc[
+                    selection["player_name"].str.contains(
+                        player_query.strip(), case=False, regex=False, na=False
+                    )
+                ].copy()
+                if matches.empty:
+                    st.info("No player names matched that search.")
+                else:
+                    st.caption(
+                        "Search results show the player's pressure-only score, rank and sample "
+                        "under every scoring method and recency setting."
+                    )
+                    search_consensus = consensus[[
+                        "role", "half_life", "player_id", "consensus_rank", "methods_supported"
+                    ]]
+                    matches = matches.merge(
+                        search_consensus,
+                        on=["role", "half_life", "player_id"], how="left",
+                        validate="many_to_one",
+                    )
+                    st.dataframe(
+                        matches[[
+                            "role", "player_name", "scoring_method", "half_life",
+                            "rank", "consensus_rank", "consistency_score",
+                            "mean_match_rate", "std_match_rate", "consistency_pct",
+                            "pressure_deliveries", "pressure_matches", "effective_matches",
+                            "secondary_rate", "eligible", "methods_supported",
+                        ]].rename(columns={
+                            "rank": "Method rank",
+                            "consensus_rank": "Consensus rank",
+                            "consistency_score": "Consistency score",
+                            "mean_match_rate": "Mean match rate",
+                            "std_match_rate": "Match-rate SD",
+                            "consistency_pct": "Share of matches at/above pool rate",
+                            "pressure_deliveries": "Pressure deliveries",
+                            "pressure_matches": "Pressure matches",
+                            "effective_matches": "Effective matches",
+                            "secondary_rate": "Secondary rate",
+                            "methods_supported": "PI methods supporting",
+                        }),
+                        use_container_width=True, hide_index=True,
+                    )
 
             st.markdown("#### Rank movement across half-lives")
             stability = consensus.pivot_table(
                 index=["role", "player_id", "player_name"],
                 columns="half_life", values="consensus_rank", aggfunc="min",
             ).reset_index()
-            display_halves = [h for h in ["unweighted", "365d", "540d", "730d"] if h in stability.columns]
+            display_halves = [
+                h for h in ["unweighted", "365d", "540d", "730d"]
+                if h in stability.columns
+            ]
             stability = stability.sort_values(
                 by=final_half_life if final_half_life in stability.columns else display_halves[0],
                 na_position="last",
             )
             st.caption(
                 "Lower ranks are better. A blank means the player did not qualify under at least three PI variants "
-                "for that half-life. The ranking uses the same player sample gates at every setting."
+                "for that half-life."
             )
             st.dataframe(
                 stability[["role", "player_name", *display_halves]].head(60),
                 use_container_width=True, hide_index=True,
             )
 
-            st.markdown("#### Top-10 overlap across recency settings")
-            stability_overlap_rows = []
+            st.markdown("#### Top-10 and Top-20 overlap across recency settings")
+            recency_overlap_rows = []
             for role_name in ["Batter", "Bowler"]:
-                sets = {}
-                for half in ["unweighted", "365d", "540d", "730d"]:
-                    sets[half] = set(
-                        consensus.loc[
-                            consensus["role"].eq(role_name)
-                            & consensus["half_life"].eq(half)
-                            & consensus["consensus_rank"].le(10),
-                            "player_id",
-                        ]
-                    )
-                anchor = sets.get(final_half_life, set())
-                for half, ids in sets.items():
-                    stability_overlap_rows.append({
-                        "role": role_name,
-                        "half_life": half,
-                        f"top10_overlap_vs_{final_half_life}": len(anchor & ids),
-                        "top10_count": len(ids),
-                    })
+                for n in [10, 20]:
+                    sets = {}
+                    for half in ["unweighted", "365d", "540d", "730d"]:
+                        sets[half] = set(
+                            consensus.loc[
+                                consensus["role"].eq(role_name)
+                                & consensus["half_life"].eq(half)
+                                & consensus["consensus_rank"].le(n),
+                                "player_id",
+                            ]
+                        )
+                    anchor = sets.get(final_half_life, set())
+                    for half, ids in sets.items():
+                        recency_overlap_rows.append({
+                            "role": role_name,
+                            "list_size": f"Top {n}",
+                            "half_life": half,
+                            f"overlap_vs_{final_half_life}": len(anchor & ids),
+                            "players_in_list": len(ids),
+                        })
             st.dataframe(
-                pd.DataFrame(stability_overlap_rows),
+                pd.DataFrame(recency_overlap_rows),
                 use_container_width=True, hide_index=True,
             )
             st.warning(
-                "Interpret rankings as evidence of relative performance uplift, not proof of psychological clutch skill. "
-                "The lower-pressure comparison includes only chase deliveries below the selected pressure threshold. "
-                "Bowler economy is withheld until bye/legbye score reconstruction is resolved."
+                "The consistency score is a conservative estimate of pressure-only performance, not a measure "
+                "of psychological clutch ability. Batter scoring uses runs per 100 balls faced. Bowler scoring "
+                "uses dot-ball percentage on known legal balls; unresolved bye/legbye rows are excluded. "
+                "Credited wickets are shown separately because wicket rates are sparse and volatile."
             )
 
 st.divider()
