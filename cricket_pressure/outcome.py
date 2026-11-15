@@ -116,6 +116,8 @@ def train_historical_win_probability(
         & states["chase_active"].fillna(False)
         & states["batting_team_id"].notna()
         & states["win_team_id"].notna()
+        & pd.to_numeric(states["batting_team_id"], errors="coerce").gt(0)
+        & pd.to_numeric(states["win_team_id"], errors="coerce").gt(0)
     ].copy()
     d["batting_team_won"] = (
         pd.to_numeric(d["batting_team_id"], errors="coerce")
