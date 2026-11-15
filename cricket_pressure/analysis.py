@@ -364,10 +364,19 @@ def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int =
     # rewriting the user's local data.
     source_dir = root / "dataset"
     legacy_source_dir = root / "data" / "raw"
-    ball_file = "ball_by_ball.csv.gz"
-    if not (source_dir / ball_file).exists() and not (source_dir / "ball_by_ball.csv").exists():
-        if (legacy_source_dir / ball_file).exists() or (legacy_source_dir / "ball_by_ball.csv").exists():
-            source_dir = legacy_source_dir
+    required_files = (
+        "ball_by_ball.csv", "matches.csv", "competitions.csv",
+        "teams.csv", "playing_eleven.csv", "competition_team_player_mapping.csv",
+    )
+
+    def has_complete_source_pack(folder: Path) -> bool:
+        return all(
+            (folder / filename).exists() or (folder / f"{filename}.gz").exists()
+            for filename in required_files
+        )
+
+    if not has_complete_source_pack(source_dir) and has_complete_source_pack(legacy_source_dir):
+        source_dir = legacy_source_dir
     tables = load_source_tables(source_dir)
     states = build_delivery_states(tables)
     enriched = add_pressure_features(states)
