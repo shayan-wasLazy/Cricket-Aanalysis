@@ -547,6 +547,7 @@ def build_rr_intelligence(source: str | Path, output_dir: str | Path,
     from .rr_selection import (
         add_project_pressure_scores, build_frequent_xi,
         build_phase_player_rankings, build_frequent_xi_phase_options,
+        build_rr_weakness_replacements,
     )
     all_ipl = add_project_pressure_scores(all_ipl, xgb_model)
     all_ipl["is_rr_match"] = all_ipl["team_1"].eq(rr_team) | all_ipl["team_2"].eq(rr_team)
@@ -568,6 +569,14 @@ def build_rr_intelligence(source: str | Path, output_dir: str | Path,
     windows = _pressure_windows(pressure_points)
     gaps = build_phase_gaps(rr_deliveries, all_ipl, rr_team)
     shortlist = build_player_fit_shortlist(all_ipl, gaps)
+    xi_review, replacements = build_rr_weakness_replacements(
+        rr_deliveries=rr_deliveries,
+        frequent_xi=frequent_xi,
+        phase_gaps=gaps,
+        phase_rankings=phase_rankings,
+        rr_fit=shortlist,
+        rr_team=rr_team,
+    )
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -583,6 +592,8 @@ def build_rr_intelligence(source: str | Path, output_dir: str | Path,
         "phase_player_rankings": out / "rr_phase_player_rankings.csv",
         "frequent_xi": out / "rr_frequent_xi.csv",
         "frequent_xi_phase_options": out / "rr_frequent_xi_phase_options.csv",
+        "xi_pressure_review": out / "rr_xi_pressure_weakness_review.csv",
+        "replacement_shortlist": out / "rr_xi_replacement_shortlist.csv",
         "report": out / "rr_intelligence_report.md",
     }
     all_ipl.to_csv(paths["all_ipl_deliveries"], index=False, compression="gzip")
@@ -598,6 +609,8 @@ def build_rr_intelligence(source: str | Path, output_dir: str | Path,
     phase_rankings.to_csv(paths["phase_player_rankings"], index=False)
     frequent_xi.to_csv(paths["frequent_xi"], index=False)
     frequent_xi_phase_options.to_csv(paths["frequent_xi_phase_options"], index=False)
+    xi_review.to_csv(paths["xi_pressure_review"], index=False)
+    replacements.to_csv(paths["replacement_shortlist"], index=False)
     _write_report(paths["report"], rr_matches, rr_deliveries, windows, gaps, shortlist,
                   start_year, end_year, rr_team)
     with paths["report"].open("a", encoding="utf-8") as report:
