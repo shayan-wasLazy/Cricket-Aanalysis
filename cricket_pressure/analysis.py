@@ -359,7 +359,16 @@ def _plot_extra_diagnostics(
 def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int = 42) -> dict:
     root = Path(project_root)
     dirs = _ensure_dirs(root)
-    tables = load_source_tables(root / "dataset")
+    # The current layout is dataset/. Older local bundles placed the same six
+    # authorised source files in data/raw/. Support both without moving or
+    # rewriting the user's local data.
+    source_dir = root / "dataset"
+    legacy_source_dir = root / "data" / "raw"
+    ball_file = "ball_by_ball.csv.gz"
+    if not (source_dir / ball_file).exists() and not (source_dir / "ball_by_ball.csv").exists():
+        if (legacy_source_dir / ball_file).exists() or (legacy_source_dir / "ball_by_ball.csv").exists():
+            source_dir = legacy_source_dir
+    tables = load_source_tables(source_dir)
     states = build_delivery_states(tables)
     enriched = add_pressure_features(states)
     pi_scored = compute_pressure_index(enriched)
