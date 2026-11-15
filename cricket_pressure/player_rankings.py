@@ -63,6 +63,11 @@ def _summarise_role(
 
     d = rows.copy()
     if role == "Batter":
+        # Wides do not count as balls faced; no-balls do.
+        if "is_wide" in d.columns:
+            d = d.loc[~d["is_wide"].fillna(False).astype(bool)].copy()
+        if d.empty:
+            return pd.DataFrame()
         d["player_id"] = pd.to_numeric(d["striker_id"], errors="coerce")
         d["player_name"] = d["striker_name"].fillna("Unknown")
         d["performance_count"] = pd.to_numeric(d["runs"], errors="coerce").fillna(0.0)
@@ -74,6 +79,11 @@ def _summarise_role(
         count_col = "performance_count"
         metric_name = "runs_per_100_pressure_deliveries"
     else:
+        # Bowling rates use legal balls, not wides/no-balls.
+        if "is_legal_ball" in d.columns:
+            d = d.loc[d["is_legal_ball"].fillna(False).astype(bool)].copy()
+        if d.empty:
+            return pd.DataFrame()
         d["player_id"] = pd.to_numeric(d["bowler_id"], errors="coerce")
         d["player_name"] = d["bowler_name"].fillna("Unknown")
         dismissal = d.get("dismissal_type", pd.Series("", index=d.index)).fillna("").astype(str).str.strip().str.lower()
@@ -82,6 +92,16 @@ def _summarise_role(
             d["is_wicket"].fillna(False).astype(bool) & dismissal.isin(credited_types)
         ).astype(int)
         d["dismissal_of_player"] = 0
+        extras_type = d.get("extras_type", pd.Series("", index=d.index)).fillna("").astype(str).str.lower()
+        extras_runs = pd.to_numeric(d.get("extras_2_runs", pd.Series(0, index=d.index)), errors="coerce").fillna(0)
+        charged_extra = extras_runs.where(extras_type.isin({"wide", "overstep"}), 0)
+        charged_extra = charged_extra + extras_type.isin({"wide", "overstep"}).astype(float)
+        d["bowler_runs_conceded"] = (
+            pd.to_numeric(d["runs"], errors="coerce").fillna(0) + charged_extra
+        )
+        d["bowler_dot"] = d["bowler_runs_conceded"].eq(0).astype(int)
+        d["weighted_runs_conceded"] = d["bowler_runs_conceded"] * d["recency_weight"].astype(float)
+        d["weighted_dots"] = d["bowler_dot"] * d["recency_weight"].astype(float)
         count_col = "credited_wicket"
         metric_name = "wickets_per_100_pressure_deliveries"
 
@@ -97,14 +117,19 @@ def _summarise_role(
         "weighted_performance": ("weighted_performance", "sum"),
         "dismissals": ("dismissal_of_player", "sum"),
     }
+    if role == "Bowler":
+        aggregations.update({
+            "raw_runs_conceded": ("bowler_runs_conceded", "sum"),
+            "raw_dots": ("bowler_dot", "sum"),
+            "weighted_runs_conceded": ("weighted_runs_conceded", "sum"),
+            "weighted_dots": ("weighted_dots", "sum"),
+        })
     grouped = (
         d.groupby(["player_id", "player_name"], dropna=False)
         .agg(**aggregations)
         .reset_index()
     )
 
-    # Weighted population baseline is computed across all eligible-role rows
-    # within this pressure definition and half-life.
     total_weighted_deliveries = float(grouped["weighted_deliveries"].sum())
     population_rate = (
         100.0 * float(grouped["weighted_performance"].sum()) / total_weighted_deliveries
@@ -118,13 +143,22 @@ def _summarise_role(
         100.0 * grouped["weighted_performance"] /
         grouped["weighted_deliveries"].replace(0, np.nan)
     )
-    # Add a fixed prior of 100 weighted delivery-equivalents to stabilize thin samples.
     prior_performance = prior_deliveries * population_rate / 100.0
     grouped["shrunk_per_100"] = (
         100.0 * (grouped["weighted_performance"] + prior_performance) /
         (grouped["weighted_deliveries"] + prior_deliveries)
     )
+    if role == "Bowler":
+        grouped["economy_per_over"] = (
+            6.0 * grouped["weighted_runs_conceded"] /
+            grouped["weighted_deliveries"].replace(0, np.nan)
+        )
+        grouped["dot_rate"] = (
+            100.0 * grouped["weighted_dots"] /
+            grouped["weighted_deliveries"].replace(0, np.nan)
+        )
     grouped["performance_metric"] = metric_name
+
     activity = d.copy()
     activity["match_date"] = pd.to_datetime(activity["match_date"], errors="coerce", utc=True)
     activity = activity.loc[activity["match_date"].notna()].copy()
@@ -149,7 +183,6 @@ def _summarise_role(
     grouped["role"] = role
     return grouped
 
-
 def build_player_rankings(
     real: pd.DataFrame,
     min_deliveries: int = DEFAULT_MIN_DELIVERIES,
@@ -159,17 +192,12 @@ def build_player_rankings(
     half_lives_days: tuple[int, ...] = RECENCY_HALF_LIVES_DAYS,
     reference_date: pd.Timestamp | str | None = None,
 ) -> pd.DataFrame:
-    """Build unweighted and recency-weighted high-pressure player rankings.
+    """Build role-correct pressure rankings with personal-baseline uplift.
 
-    Eligibility always uses raw counts: at least min_deliveries pressure balls
-    across min_matches distinct matches. Recency changes the performance rate,
-    not the sample gate. Shrinkage uses a fixed pseudo-sample prior of
-    prior_deliveries weighted delivery-equivalents.
-
-    The reference date defaults to the current UTC date, so old appearances
-    continue to age even when the data pack itself is stale. Pass reference_date
-    explicitly to reproduce a historical selection snapshot; it is recorded in
-    each output row.
+    Batters are evaluated when the batting side is under pressure. Bowlers are
+    evaluated when the defending side is under pressure (the inverse chase
+    state). A low-pressure chase baseline is computed for each player using
+    the same PI/XG method and recency horizon.
     """
     if real.empty:
         return pd.DataFrame()
@@ -191,39 +219,91 @@ def build_player_rankings(
         reference = pd.Timestamp(reference).normalize()
     date_reference = reference.isoformat()
 
+    recency_specs: list[tuple[str, int | None]] = [("unweighted", None)]
+    recency_specs.extend((f"{h}d", h) for h in half_lives_days)
     frames = []
+
     for method, score_col in SCORE_METHODS.items():
         if score_col not in real.columns:
             continue
-        pressure_rows = real.loc[
-            pd.to_numeric(real[score_col], errors="coerce") >= high_pressure_threshold
-        ].copy()
-        if pressure_rows.empty:
-            continue
-        pressure_rows["match_date"] = pd.to_datetime(
-            pressure_rows["match_date"], errors="coerce", utc=True
-        )
-
-        recency_specs: list[tuple[str, int | None]] = [("unweighted", None)]
-        recency_specs.extend((f"{h}d", h) for h in half_lives_days)
-        for half_life_label, half_life_days in recency_specs:
-            part = pressure_rows.copy()
-            if half_life_days is None:
-                part["recency_weight"] = 1.0
+        scores = pd.to_numeric(real[score_col], errors="coerce")
+        for role in ("Batter", "Bowler"):
+            if role == "Batter":
+                pressure_rows = real.loc[scores.ge(high_pressure_threshold)].copy()
+                baseline_rows = real.loc[scores.lt(100.0 - high_pressure_threshold)].copy()
             else:
-                age_days = (
-                    reference - part["match_date"]
-                ).dt.total_seconds() / 86400.0
-                part["recency_weight"] = np.power(
-                    2.0, -age_days.clip(lower=0) / float(half_life_days)
-                )
-                part.loc[part["match_date"].isna(), "recency_weight"] = np.nan
-                part = part.loc[part["recency_weight"].notna()].copy()
+                # Invert batter-side pressure: a bowler is under pressure when the
+                # chasing batting side is relatively comfortable / in control.
+                pressure_rows = real.loc[scores.le(100.0 - high_pressure_threshold)].copy()
+                baseline_rows = real.loc[scores.gt(high_pressure_threshold)].copy()
+            if pressure_rows.empty:
+                continue
+            pressure_rows["match_date"] = pd.to_datetime(
+                pressure_rows["match_date"], errors="coerce", utc=True
+            )
+            baseline_rows["match_date"] = pd.to_datetime(
+                baseline_rows["match_date"], errors="coerce", utc=True
+            )
 
-            for role in ("Batter", "Bowler"):
-                summary = _summarise_role(part, role, prior_deliveries, reference)
+            for half_life_label, half_life_days in recency_specs:
+                def apply_recency(part: pd.DataFrame) -> pd.DataFrame:
+                    result = part.copy()
+                    if half_life_days is None:
+                        result["recency_weight"] = 1.0
+                    else:
+                        age_days = (
+                            reference - result["match_date"]
+                        ).dt.total_seconds() / 86400.0
+                        result["recency_weight"] = np.power(
+                            2.0, -age_days.clip(lower=0) / float(half_life_days)
+                        )
+                        result.loc[result["match_date"].isna(), "recency_weight"] = np.nan
+                        result = result.loc[result["recency_weight"].notna()].copy()
+                    return result
+
+                high_part = apply_recency(pressure_rows)
+                base_part = apply_recency(baseline_rows)
+                summary = _summarise_role(high_part, role, prior_deliveries, reference)
                 if summary.empty:
                     continue
+                baseline = _summarise_role(base_part, role, prior_deliveries, reference)
+                if not baseline.empty:
+                    rename = {
+                        "pressure_deliveries": "baseline_deliveries",
+                        "pressure_matches": "baseline_matches",
+                        "shrunk_per_100": "baseline_shrunk_per_100",
+                        "weighted_per_100": "baseline_weighted_per_100",
+                        "observed_per_100": "baseline_observed_per_100",
+                        "economy_per_over": "baseline_economy_per_over",
+                        "dot_rate": "baseline_dot_rate",
+                    }
+                    keep = ["player_id"] + [c for c in rename if c in baseline.columns]
+                    baseline = baseline[keep].rename(columns=rename)
+                    summary = summary.merge(baseline, on="player_id", how="left", validate="one_to_one")
+                else:
+                    for col in ["baseline_deliveries", "baseline_matches", "baseline_shrunk_per_100",
+                                "baseline_weighted_per_100", "baseline_observed_per_100",
+                                "baseline_economy_per_over", "baseline_dot_rate"]:
+                        summary[col] = np.nan
+
+                summary["pressure_uplift_per_100"] = (
+                    summary["shrunk_per_100"] - summary["baseline_shrunk_per_100"]
+                )
+                if role == "Batter":
+                    rate_pct = summary["shrunk_per_100"].rank(pct=True)
+                    uplift_pct = summary["pressure_uplift_per_100"].rank(pct=True)
+                    uplift_pct = uplift_pct.where(summary["pressure_uplift_per_100"].notna(), rate_pct)
+                    summary["selection_score"] = 100.0 * (.75 * rate_pct + .25 * uplift_pct)
+                else:
+                    wicket_pct = summary["shrunk_per_100"].rank(pct=True)
+                    economy_pct = summary["economy_per_over"].rank(pct=True, ascending=False)
+                    dot_pct = summary["dot_rate"].rank(pct=True)
+                    uplift_pct = summary["pressure_uplift_per_100"].rank(pct=True)
+                    uplift_pct = uplift_pct.where(summary["pressure_uplift_per_100"].notna(), wicket_pct)
+                    summary["selection_score"] = 100.0 * (
+                        .45 * wicket_pct + .20 * economy_pct + .15 * dot_pct + .20 * uplift_pct
+                    )
+
                 summary["scoring_method"] = method
                 summary["score_column"] = score_col
                 summary["half_life"] = half_life_label
@@ -241,7 +321,7 @@ def build_player_rankings(
                 summary["rank"] = np.nan
                 eligible_idx = summary.index[summary["eligible"]]
                 summary.loc[eligible_idx, "rank"] = (
-                    summary.loc[eligible_idx, "shrunk_per_100"]
+                    summary.loc[eligible_idx, "selection_score"]
                     .rank(method="min", ascending=False)
                 )
                 frames.append(summary)
@@ -251,13 +331,12 @@ def build_player_rankings(
     return (
         pd.concat(frames, ignore_index=True, sort=False)
         .sort_values(
-            ["role", "scoring_method", "half_life_days", "eligible", "rank", "shrunk_per_100"],
+            ["role", "scoring_method", "half_life_days", "eligible", "rank", "selection_score"],
             ascending=[True, True, True, False, True, False],
             na_position="last",
         )
         .reset_index(drop=True)
     )
-
 
 def compare_top10_rankings(rankings: pd.DataFrame, top_n: int = 10) -> pd.DataFrame:
     """Long-form Top-N comparison table for the dashboard and CSV exports."""
@@ -363,12 +442,13 @@ def build_weighted_rrf_ensemble(
                 # One row per player ID per model; names are descriptive, IDs
                 # are the stable key used to aggregate rankings across models.
                 candidates["player_id"] = pd.to_numeric(candidates["player_id"], errors="coerce")
+                rank_col = "selection_score" if "selection_score" in candidates and candidates["selection_score"].notna().any() else "shrunk_per_100"
                 candidates = candidates.sort_values(
-                    ["shrunk_per_100", "player_id"],
+                    [rank_col, "player_id"],
                     ascending=[False, True],
                     kind="mergesort",
                 ).drop_duplicates("player_id", keep="first")
-                candidates["model_rank"] = candidates["shrunk_per_100"].rank(
+                candidates["model_rank"] = candidates[rank_col].rank(
                     method="min", ascending=False
                 ).astype(int)
                 candidates["model_weight"] = float(weight)
@@ -380,6 +460,7 @@ def build_weighted_rrf_ensemble(
                     "model_weight", "rrf_contribution", "pressure_deliveries",
                     "pressure_matches", "last_pressure_match_date",
                     "days_since_last_pressure_match",
+                    *[c for c in ["selection_score", "pressure_uplift_per_100", "economy_per_over", "dot_rate"] if c in candidates.columns],
                 ]].copy())
 
             if not method_frames:
@@ -396,6 +477,8 @@ def build_weighted_rrf_ensemble(
                 max_pressure_matches_supported=("pressure_matches", "max"),
                 last_pressure_match_date=("last_pressure_match_date", "max"),
                 days_since_last_pressure_match=("days_since_last_pressure_match", "min"),
+                mean_selection_score=("selection_score", "mean") if "selection_score" in long else ("model_rank", "mean"),
+                mean_pressure_uplift_per_100=("pressure_uplift_per_100", "mean") if "pressure_uplift_per_100" in long else ("model_rank", "mean"),
             )
 
             for method, _weight in weights.items():
@@ -403,7 +486,7 @@ def build_weighted_rrf_ensemble(
                 method_rows = long.loc[long["scoring_method"].eq(method)].drop_duplicates("player_id").set_index("player_id")
                 if not method_rows.empty:
                     summary = summary.join(
-                        method_rows[["model_rank", "rrf_contribution"]].rename(columns={
+                        method_rows[[c for c in ["model_rank", "rrf_contribution", "selection_score", "pressure_uplift_per_100", "economy_per_over", "dot_rate"] if c in method_rows]].rename(columns={
                             "model_rank": f"rank_{slug}",
                             "rrf_contribution": f"contribution_{slug}",
                         }),
