@@ -1,7 +1,9 @@
 import numpy as np
 import pandas as pd
 
-from cricket_pressure.rr_final_decisions import _add_phase_pi, _player_metrics
+from cricket_pressure.rr_final_decisions import (
+    _add_phase_pi, _player_metrics, _rr_player_phase_record,
+)
 
 
 def test_phase_specific_pi_and_bowler_pressure_are_role_correct():
@@ -94,3 +96,40 @@ def test_last_over_comparison_uses_same_player_low_pressure_baseline():
     assert np.isclose(finisher["last_over_strike_rate"], 200.0)
     assert np.isclose(finisher["last_over_baseline_strike_rate"], 100.0)
     assert np.isclose(finisher["last_over_uplift"], 100.0)
+
+
+
+def test_rr_phase_record_survives_when_no_deliveries_are_high_pressure():
+    rows = pd.DataFrame({
+        "match_id": [101, 101],
+        "phase": ["Powerplay", "Powerplay"],
+        "chase_active": [True, True],
+        "batting_team": ["Rajasthan Royals", "Rajasthan Royals"],
+        "bowling_team": ["Opponent", "Opponent"],
+        "batter_id": ["BAT-9", "BAT-9"],
+        "batter": ["RR Batter", "RR Batter"],
+        "batter_ball_faced": [True, True],
+        "runs_batter": [1, 0],
+        "dismissed_striker": [False, False],
+        "is_boundary_four": [False, False],
+        "is_boundary_six": [False, False],
+        "balls_remaining": [6, 5],
+        "rrr_pressure": [0.0, 0.0],
+        "wicket_pressure": [0.0, 0.0],
+        "time_urgency": [0.0, 0.0],
+        "momentum_pressure": [0.0, 0.0],
+        "death_over_pressure": [0.0, 0.0],
+        "target_difficulty": [0.0, 0.0],
+        "match_stakes": [0.0, 0.0],
+        "xgb_pressure_score": [0.0, 0.0],
+    })
+
+    result = _rr_player_phase_record(
+        rows, role="Batter", phase="Powerplay", rr_team="Rajasthan Royals"
+    )
+
+    assert len(result) == 1
+    assert result.iloc[0]["player_name"] == "RR Batter"
+    assert pd.isna(result.iloc[0]["rr_pi_pressure_deliveries"])
+    assert result.iloc[0]["rr_baseline_deliveries"] == 2
+    assert not bool(result.iloc[0]["rr_last_over_sample_adequate"])
