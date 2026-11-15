@@ -1132,7 +1132,13 @@ with tabs[11]:
                 "team_need_score", "decision_score", "weakness_score", "weakness_status",
                 "rr_pi_pressure_deliveries", "rr_pi_pressure_matches", "pressure_sr_uplift",
                 "pressure_boundary_uplift", "pressure_dismissal_delta", "pressure_economy_delta",
-                "pressure_wicket_delta", "pressure_dot_delta", "weakness_reason",
+                "pressure_wicket_delta", "pressure_dot_delta",
+                "rr_last_over_deliveries", "rr_last_over_matches",
+                "rr_last_over_strike_rate", "rr_last_over_baseline_strike_rate",
+                "rr_last_over_uplift", "rr_last_over_dismissal_delta",
+                "rr_last_over_economy", "rr_last_over_baseline_economy",
+                "rr_last_over_wickets_per_100", "rr_last_over_dot_rate",
+                "rr_last_over_sample_adequate", "weakness_reason",
             ] if c in filtered_review.columns]
             st.dataframe(filtered_review[review_cols].rename(columns={
                 "historical_xi_rank": "2026 XI rank", "player_name": "Player", "pi_type": "Selected PI",
@@ -1142,6 +1148,17 @@ with tabs[11]:
                 "pressure_sr_uplift": "Pressure SR uplift", "pressure_boundary_uplift": "Boundary-rate uplift",
                 "pressure_dismissal_delta": "Dismissal delta / 100", "pressure_economy_delta": "Pressure economy delta",
                 "pressure_wicket_delta": "Wicket-rate delta / 100", "pressure_dot_delta": "Dot-rate delta",
+                "rr_last_over_deliveries": "Last-over pressure balls",
+                "rr_last_over_matches": "Last-over pressure matches",
+                "rr_last_over_strike_rate": "Last-over pressure SR",
+                "rr_last_over_baseline_strike_rate": "Last-over baseline SR",
+                "rr_last_over_uplift": "Last-over SR / economy uplift",
+                "rr_last_over_dismissal_delta": "Last-over dismissal delta",
+                "rr_last_over_economy": "Last-over pressure economy",
+                "rr_last_over_baseline_economy": "Last-over baseline economy",
+                "rr_last_over_wickets_per_100": "Last-over wickets / 100",
+                "rr_last_over_dot_rate": "Last-over dot rate",
+                "rr_last_over_sample_adequate": "Last-over sample adequate",
                 "weakness_reason": "Evidence",
             }), use_container_width=True, hide_index=True)
 
@@ -1160,6 +1177,8 @@ with tabs[11]:
                     "pi_pressure_deliveries", "pi_pressure_matches", "xgb_pressure_deliveries",
                     "player_fit_score", "franchises", "candidate_sample_status",
                     "candidate_fit_reason", "availability_status",
+                    "last_over_fit_score", "last_over_deliveries", "last_over_matches",
+                    "last_over_sample_adequate", "last_over_candidate_evidence",
                 ] if c in repl.columns]
                 st.dataframe(repl[repl_cols].rename(columns={
                     "weak_role": "Role", "weak_phase": "Phase", "replacement_rank": "Replacement rank",
@@ -1170,6 +1189,11 @@ with tabs[11]:
                     "xgb_pressure_deliveries": "XGB pressure balls", "player_fit_score": "Role/phase fit",
                     "franchises": "Observed franchises", "candidate_sample_status": "Sample gate",
                     "candidate_fit_reason": "Fit rationale", "availability_status": "Availability",
+                    "last_over_fit_score": "Final-over fit score",
+                    "last_over_deliveries": "Final-over pressure balls",
+                    "last_over_matches": "Final-over matches",
+                    "last_over_sample_adequate": "Final-over sample adequate",
+                    "last_over_candidate_evidence": "Final-over evidence",
                 }), use_container_width=True, hide_index=True)
                 st.download_button(
                     "Download RR replacement shortlist",
@@ -1180,6 +1204,8 @@ with tabs[11]:
             st.info(
                 "Replacement score = 85% phase PI/XGBoost decision score + 15% player-fit score. The phase model is 80% PI / 20% synthetic XGBoost. "
                 "Powerplay uses baseline PI, Middle uses momentum-heavy PI, and Death uses RRR-situation-heavy PI. "
+                "For Death-over replacements, final-over pressure performance can add 15% to the score only when "
+                "the candidate has at least 8 final-over pressure balls across 2 matches; otherwise the phase score is used. "
                 "Candidates exclude the current XI and normally need at least 20 PI-pressure deliveries over 3 matches; relaxed gates are labelled."
             )
             st.warning(
