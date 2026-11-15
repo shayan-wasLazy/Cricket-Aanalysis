@@ -446,6 +446,27 @@ def build_rr_weakness_replacements(
     )
     review["model_weakness_component"] = (100 - review["decision_score"]).clip(0, 100).fillna(50)
     review["underperformance_component"] = review["rr_pressure_underperformance_score"].fillna(50)
+
+    # A last-over signal only becomes a weakness flag after its own minimum sample gate.
+    last_over_uplift = review.get("rr_last_over_uplift", pd.Series(np.nan, index=review.index))
+    batter_last_drop = review["role"].eq("Batter") & last_over_uplift.lt(-15)
+    bowler_last_drop = review["role"].eq("Bowler") & last_over_uplift.lt(-2.0)
+    last_over_sample_ok = review.get(
+        "rr_last_over_sample_adequate", pd.Series(False, index=review.index)
+    ).fillna(False)
+    last_over_drop = last_over_sample_ok & (batter_last_drop | bowler_last_drop)
+    review["last_over_weakness_score"] = np.select(
+        [review["role"].eq("Batter"), review["role"].eq("Bowler")],
+        [
+            ((-last_over_uplift).clip(lower=0) / 15).clip(0, 1) * 100,
+            ((-last_over_uplift).clip(lower=0) / 2).clip(0, 1) * 100,
+        ],
+        default=0.0,
+    )
+    review.loc[~last_over_sample_ok, "last_over_weakness_score"] = 0.0
+    review["underperformance_component"] = np.maximum(
+        review["underperformance_component"], review["last_over_weakness_score"]
+    )
     review["weakness_score"] = (
         .35 * review["team_need_score"]
         + .40 * review["model_weakness_component"]
@@ -454,17 +475,10 @@ def build_rr_weakness_replacements(
 
     adequate = _as_bool(review.get("rr_pressure_sample_adequate", pd.Series(False, index=review.index)))
     pressure_drop = review["rr_pressure_underperformance_score"].ge(50)
-    # A last-over signal only becomes a weakness flag after the minimum sample gate.
-    last_over_uplift = review.get("rr_last_over_uplift", pd.Series(np.nan, index=review.index))
-    batter_last_drop = review["role"].eq("Batter") & last_over_uplift.lt(-15)
-    bowler_last_drop = review["role"].eq("Bowler") & last_over_uplift.lt(-2.0)
-    last_over_drop = review.get(
-        "rr_last_over_sample_adequate", pd.Series(False, index=review.index)
-    ).fillna(False) & (batter_last_drop | bowler_last_drop)
     model_low = review["decision_score"].lt(45)
     team_need = review["team_need_score"].ge(35)
     review["weakness_status"] = np.select(
-        [adequate & (pressure_drop | last_over_drop | (model_low & team_need)), ~adequate & team_need],
+        [(adequate & (pressure_drop | (model_low & team_need))) | last_over_drop, ~adequate & team_need],
         ["Pressure weakness supported by RR sample", "Squad need — individual RR pressure sample is limited"],
         default="No strong weakness signal",
     )
