@@ -61,6 +61,7 @@ def load_data():
         "score_audit": _read_optional(OUT / "score_reconciliation_audit.csv"),
         "innings_audit": _read_optional(OUT / "innings_validation.csv"),
         "outcome_calibration": _read_optional(OUT / "historical_win_probability_calibration.csv"),
+        "outcome_recency": _read_optional(OUT / "historical_win_probability_recency_comparison.csv"),
         "outcome_importance": _read_optional(OUT / "historical_win_probability_feature_importance.csv"),
         "outcome_predictions": _read_optional(ROOT / "data" / "processed" / "historical_win_probability_predictions.csv.gz"),
     }
@@ -134,7 +135,7 @@ with right:
 
 tabs = st.tabs([
     "Synthetic diagnostics", "Scenario playground", "Weight lab",
-    "Match disagreement", "Player rankings", "Historical win model", "Score audit",
+    "Match disagreement", "Player rankings", "Historical win model", "Score audit", "Recency analysis",
 ])
 
 with tabs[0]:
@@ -300,7 +301,19 @@ with tabs[4]:
                          key=lambda x: list(["PI baseline","PI RRR-heavy","PI momentum-heavy","PI stakes-heavy","XGBoost"]).index(x)
                          if x in ["PI baseline","PI RRR-heavy","PI momentum-heavy","PI stakes-heavy","XGBoost"] else 99)
         selected_methods = st.multiselect("Models to compare", methods, default=methods)
-        p = rankings.loc[rankings["role"].eq(role) & rankings["scoring_method"].isin(selected_methods)].copy()
+        half_lives = ["unweighted", "365d", "540d", "730d"]
+        selected_half_life = st.selectbox(
+            "Recency setting",
+            half_lives,
+            index=2,
+            format_func=lambda x: {"unweighted":"No decay", "365d":"365-day half-life",
+                                  "540d":"540-day half-life", "730d":"730-day half-life"}[x],
+        )
+        p = rankings.loc[
+            rankings["role"].eq(role)
+            & rankings["scoring_method"].isin(selected_methods)
+            & rankings["half_life"].eq(selected_half_life)
+        ].copy()
         p["eligible_current"] = p["pressure_deliveries"].ge(min_deliveries) & p["pressure_matches"].ge(min_matches)
         p["current_rank"] = np.nan
         for method, idx in p.loc[p["eligible_current"]].groupby("scoring_method").groups.items():
@@ -329,6 +342,87 @@ with tabs[4]:
             st.dataframe(p.sort_values(["scoring_method","eligible_current","shrunk_per_100"],
                                        ascending=[True,False,False]),
                          use_container_width=True, hide_index=True)
+
+
+with tabs[7]:
+    st.subheader("Recency weighting laboratory")
+    st.caption("A 365-day half-life halves the influence of a match one year old relative to the newest match in this dataset. The reference date is fixed to the latest valid match date in the dataset, so reruns are reproducible.")
+    recency_table = data["outcome_recency"]
+    if recency_table.empty:
+        st.info("Recency comparison is not available. Run the latest python run_analysis.py.")
+    else:
+        st.markdown("#### Historical win-probability model")
+        st.caption("All models share the same chronological match-level train/test split. Recency weights are used only for training observations. The held-out matches are evaluated with identical match-balanced weights for every model.")
+        pretty = recency_table.copy()
+        pretty["Brier score"] = pretty["brier_score_match_weighted"]
+        pretty["ROC-AUC"] = pretty["roc_auc_match_weighted"]
+        pretty["Log loss"] = pretty["log_loss_match_weighted"]
+        st.dataframe(pretty[["half_life","train_matches","test_matches","Brier score","ROC-AUC","Log loss","cutoff_date_utc"]],
+                     use_container_width=True, hide_index=True)
+        l,r = st.columns(2)
+        with l:
+            fig = px.line(recency_table, x="half_life", y="brier_score_match_weighted", markers=True,
+                          title="Out-of-time Brier score by training recency",
+                          labels={"half_life":"Training recency","brier_score_match_weighted":"Brier score (lower is better)"})
+            st.plotly_chart(fig, use_container_width=True)
+        with r:
+            fig = px.line(recency_table, x="half_life", y="roc_auc_match_weighted", markers=True,
+                          title="Out-of-time ROC-AUC by training recency",
+                          labels={"half_life":"Training recency","roc_auc_match_weighted":"ROC-AUC (higher is better)"})
+            st.plotly_chart(fig, use_container_width=True)
+
+    rankings = data["rankings"]
+    if not rankings.empty:
+        st.markdown("#### Player ranking stability")
+        st.caption("Each half-life uses the same high-pressure threshold and raw delivery/match eligibility gates. Only the contribution of older performances changes.")
+        role_for_stability = st.selectbox("Role for recency comparison", ["Batter","Bowler"], key="recency_role")
+        methods_for_stability = sorted(rankings["scoring_method"].dropna().unique().tolist())
+        method_for_stability = st.selectbox("Pressure definition", methods_for_stability, key="recency_method")
+        player_min_deliveries = st.number_input("Minimum pressure deliveries for stability",
+                                                min_value=0, max_value=100000, value=100, step=25,
+                                                key="recency_min_deliveries")
+        player_min_matches = st.number_input("Minimum pressure matches for stability",
+                                             min_value=0, max_value=10000, value=10, step=1,
+                                             key="recency_min_matches")
+        rp = rankings.loc[
+            rankings["role"].eq(role_for_stability)
+            & rankings["scoring_method"].eq(method_for_stability)
+            & rankings["pressure_deliveries"].ge(player_min_deliveries)
+            & rankings["pressure_matches"].ge(player_min_matches)
+        ].copy()
+        if rp.empty:
+            st.info("No eligible players under these sample thresholds.")
+        else:
+            top_sets = {}
+            for half in ["unweighted","365d","540d","730d"]:
+                top_sets[half] = set(
+                    rp.loc[rp["half_life"].eq(half)].nsmallest(10, "rank")["player_id"].dropna()
+                )
+            overlap_df = pd.DataFrame([
+                {
+                    "half_life": half,
+                    "top10_overlap_vs_unweighted": len(top_sets["unweighted"] & top_sets[half]),
+                    "eligible_players": int(rp.loc[rp["half_life"].eq(half), "player_id"].nunique()),
+                }
+                for half in ["unweighted","365d","540d","730d"]
+            ])
+            st.dataframe(overlap_df, use_container_width=True, hide_index=True)
+            movement = rp.pivot_table(index=["player_id","player_name"], columns="half_life",
+                                      values="rank", aggfunc="min").reset_index()
+            if "unweighted" in movement.columns:
+                st.caption("Rank movement by half-life. Lower rank is better; a missing rank means the player is outside the eligible top-ranked group.")
+                st.dataframe(movement.sort_values("unweighted").head(50), use_container_width=True, hide_index=True)
+
+    st.markdown("#### Recency-weight curve")
+    age = np.arange(0, 4 * 365 + 1, 30)
+    curve = pd.DataFrame({"age_days": age})
+    for half in [365,540,730]:
+        curve[f"{half}-day half-life"] = np.power(2.0, -age / half)
+    curve_long = curve.melt(id_vars="age_days", var_name="Half-life", value_name="Relative weight")
+    fig = px.line(curve_long, x="age_days", y="Relative weight", color="Half-life",
+                  title="How historical matches are discounted",
+                  labels={"age_days":"Age of match (days)","Relative weight":"Contribution multiplier"})
+    st.plotly_chart(fig, use_container_width=True)
 
 with tabs[5]:
     st.subheader("Historical win-probability model")
