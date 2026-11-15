@@ -210,8 +210,11 @@ def build_frequent_xi(source: str | Path, rr_deliveries: pd.DataFrame,
     bowling = rr.loc[rr["bowling_team"].eq(rr_team)].copy()
     bowling["bowler_key"] = _key(bowling, "bowler_id", "bowler")
     bowling["bowler_runs_conceded"] = bowling["runs_batter"] + bowling["wides"] + bowling["no_balls"]
+    bowling["legal_match_id"] = bowling["match_id"].where(
+        bowling["is_legal_ball"].fillna(False).astype(bool)
+    )
     bowl_stats = bowling.groupby("bowler_key", as_index=False).agg(
-        rr_bowling_matches=("match_id", "nunique"),
+        rr_bowling_matches=("legal_match_id", "nunique"),
         rr_bowling_legal_balls=("is_legal_ball", "sum"),
         rr_bowling_runs_conceded=("bowler_runs_conceded", "sum"),
         rr_bowling_wickets=("bowler_credited_wicket", "sum"),
