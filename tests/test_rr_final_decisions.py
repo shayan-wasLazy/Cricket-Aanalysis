@@ -53,3 +53,42 @@ def test_bowler_pressure_metrics_use_legal_balls_and_credited_wickets():
     assert np.isclose(result["economy"], 15.0)
     assert np.isclose(result["wickets_per_100"], 50.0)
     assert np.isclose(result["dot_rate"], 25.0)
+
+
+
+def test_last_over_comparison_uses_same_player_low_pressure_baseline():
+    from cricket_pressure.rr_final_decisions import _last_over_comparison
+
+    rows = []
+    for match_id, flag in [(1, True), (2, True), (3, False), (4, False)]:
+        for ball in range(8):
+            rows.append({
+                "match_id": match_id,
+                "batter_id": "BAT-1",
+                "batter": "Finisher",
+                "batter_ball_faced": True,
+                "chase_active": True,
+                "balls_remaining": 6 - (ball % 6),
+                "phase_pi_high": flag,
+                "phase_pi_baseline": not flag,
+                "runs_batter": 2 if flag else 1,
+                "dismissed_striker": False,
+                "is_boundary_four": flag and ball in {1, 3},
+                "is_boundary_six": False,
+                "phase_pi_score": 75.0 if flag else 20.0,
+            })
+    metrics = _last_over_comparison(
+        pd.DataFrame(rows),
+        "Batter",
+        "phase_pi_high",
+        "phase_pi_baseline",
+        "phase_pi_score",
+        "last_over",
+    )
+    finisher = metrics.iloc[0]
+    assert finisher["last_over_deliveries"] == 16
+    assert finisher["last_over_matches"] == 2
+    assert finisher["last_over_sample_adequate"]
+    assert np.isclose(finisher["last_over_strike_rate"], 200.0)
+    assert np.isclose(finisher["last_over_baseline_strike_rate"], 100.0)
+    assert np.isclose(finisher["last_over_uplift"], 100.0)
