@@ -356,3 +356,100 @@ New outputs:
 - outputs/rr_intelligence/rr_frequent_xi_phase_options.csv
 
 Important: XGBoost is trained on synthetic teacher labels, so it is a supporting signal and not empirically validated psychological-pressure ground truth. The frequent XI membership and appearance counts are based on IPL 2026 only; the player phase-performance scores use the 2022–2026 IPL sample. This is not the official 2027 retained squad. Confirm current retention and auction availability independently.
+
+## Final pressure rankings and RR XI replacement decisions
+
+The latest decision layer makes two distinct outputs available in the dashboard's
+**Final submission + RR XI decisions** tab.
+
+### Competition submission: top 10 batters and top 10 bowlers
+
+The final submission view runs weighted Reciprocal Rank Fusion (RRF) over the
+existing pressure ranking methods. Default method weights remain:
+
+| Ranking method | RRF weight |
+|---|---:|
+| PI baseline | 35% |
+| PI RRR-heavy | 25% |
+| PI momentum-heavy | 20% |
+| PI stakes-heavy | 15% |
+| Synthetic-trained XGBoost | 5% |
+
+A minimum of 100 pressure deliveries, 10 pressure matches, recent activity within
+365 days, and support from at least three methods are the default dashboard gates.
+The user can change each gate and the recency horizon. RRF is a ranking-consensus
+mechanism: it rewards players who rank consistently across model variants rather
+than treating the raw scores from different methods as directly interchangeable.
+
+The player scoring logic is role-specific:
+
+- **Batters:** evaluate high batting-side pressure (PI/XG score ≥60) and compare
+  their shrunk runs per 100 pressure balls with their own low-pressure chase
+  baseline (score <40). The selection score combines pressure scoring-rate
+  percentile (75%) and personal pressure-uplift percentile (25%).
+- **Bowlers:** evaluate defending-side pressure, i.e. the inverse chase state
+  (batting-side pressure score ≤40). Use legal balls, credited wickets per 100
+  pressure balls, economy rate, dot-ball rate, and uplift in wicket rate versus
+  the player's own low-bowling-pressure baseline. The selection score weights
+  wicket-rate percentile (45%), economy percentile (20%), dot rate (15%), and
+  personal wicket-rate uplift (20%).
+
+The RRF weight assigned to synthetic-trained XGBoost is intentionally only 5%.
+Its labels are a declared synthetic teacher rule; its holdout metrics do not
+validate psychological pressure in real matches. The PI variants get 95% total
+weight. Use the exported CSVs as the ranked list for manual review, then verify
+player-name spelling and dropdown eligibility on the competition portal.
+
+### Rajasthan Royals: current-XI pressure diagnosis and replacements
+
+The RR decision tab uses the most frequently listed RR playing XI in **IPL 2026**
+as the current/historical XI reference. It is not an official 2027 retention list.
+For each XI member's observed role and each phase (Powerplay, Middle, Death), it:
+
+1. Measures RR's phase-specific batting/bowling need against the rest of the IPL.
+2. Compares the XI player's RR chase performance in high pressure against that
+   same player's lower-pressure chase baseline. Batting evidence includes strike
+   rate, boundary rate and dismissal rate; bowling evidence includes economy,
+   wickets per 100 legal balls and dot-ball rate.
+3. Joins the player's phase performance to the all-IPL PI/XGBoost phase ranking
+   and labels the finding as a measured pressure weakness, a team phase need with
+   limited individual RR sample, or no strong weakness signal.
+4. Retrieves a same-role, same-phase candidate from the wider IPL pool, excludes
+   current XI members and ranks candidates using 85% phase PI/XGBoost decision
+   score plus 15% general role/phase fit.
+
+Phase-specific PI settings are selected by the cricket task:
+
+| Phase | PI variant | Why |
+|---|---|---|
+| Powerplay | Baseline PI | Balanced read of early chase context and wickets |
+| Middle | Momentum-heavy PI | Emphasises a scoring-rate shortfall and ability to control the chase |
+| Death | RRR-heavy PI | Emphasises the required scoring rate and limited balls remaining |
+
+The phase player score remains 80% PI / 20% synthetic-trained XGBoost. The bowler
+uses the inverse of the batting-side pressure state. RR replacement candidates
+normally need at least 20 PI-pressure deliveries across 3 matches; candidates that
+only pass a relaxed phase-exposure gate are explicitly labelled. Auction/retention
+availability, overseas slots, budget, and final squad balance are not inferred.
+
+### Rebuild the new outputs
+
+From the repository root, with the six authorised CSV files in `dataset/`:
+
+```bash
+python run_analysis.py
+python scripts/build_rr_intelligence.py --download --start-year 2022 --end-year 2026 --xi-season 2026
+streamlit run dashboard/app.py
+```
+
+The RR build writes two additional outputs:
+
+- `outputs/rr_intelligence/rr_xi_pressure_weakness_review.csv`
+- `outputs/rr_intelligence/rr_xi_replacement_shortlist.csv`
+
+The Final Top 10 tab reads the regenerated `outputs/player_rankings.csv`.
+Generated data, archives, outputs and model files remain local/ignored; push code
+and documentation only. The main data-quality caveat remains: the supplied
+ball-by-ball source encodes byes/legbyes in a categorical extras field without
+unambiguous numeric run counts. Reconcile affected score reconstructions before
+making definitive claims about pressure failures.
