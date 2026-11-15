@@ -225,7 +225,7 @@ At the half-life, a match receives half the weight of a match on the reference d
 
 ### Player rankings
 
-For each pressure definition (PI baseline, three PI weight alternatives and synthetic-trained XGBoost), batters and bowlers receive an unweighted ranking plus 365d / 540d / 730d rankings.
+For each pressure definition (PI baseline, three PI weight alternatives and synthetic-trained XGBoost), batters and bowlers receive an unweighted ranking plus 180d / 365d / 540d / 730d rankings.
 
 - The reference date defaults to the current UTC date, not the newest match date inside the source data pack. This ensures an inactive player's last appearance continues to age even when the data pack itself is old. Pass an explicit reference date to reproduce a historical selection snapshot.
 - Player eligibility still uses raw pressure deliveries and distinct matches (default: 100 deliveries and 10 matches). Recency does not let a small recent sample bypass these gates.
