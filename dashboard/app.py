@@ -82,6 +82,8 @@ def load_data():
         "rr_phase_rankings": _read_optional(OUT / "rr_intelligence" / "rr_phase_player_rankings.csv"),
         "rr_frequent_xi": _read_optional(OUT / "rr_intelligence" / "rr_frequent_xi.csv"),
         "rr_frequent_xi_options": _read_optional(OUT / "rr_intelligence" / "rr_frequent_xi_phase_options.csv"),
+        "rr_xi_review": _read_optional(OUT / "rr_intelligence" / "rr_xi_pressure_weakness_review.csv"),
+        "rr_replacements": _read_optional(OUT / "rr_intelligence" / "rr_xi_replacement_shortlist.csv"),
 
     }
 
@@ -156,6 +158,7 @@ tabs = st.tabs([
     "Synthetic diagnostics", "Scenario playground", "Weight lab",
     "Match disagreement", "Player rankings", "Historical win model", "Score audit", "Recency analysis",
     "RRF ensemble shortlist", "RR squad intelligence", "PI/XGB phase selector & RR XI",
+    "Final submission + RR XI decisions",
 ])
 
 with tabs[0]:
@@ -963,6 +966,226 @@ with tabs[10]:
                     "Every player appears in all six options: batting and bowling in Powerplay, Middle and Death. "
                     "A missing score means the player has no qualifying high-pressure sample for that option."
                 )
+
+
+
+
+with tabs[11]:
+    st.subheader("Final submission rankings + RR XI replacement plan")
+    submission_tab, rr_plan_tab = st.tabs(["Final Top 10 — IPL + T20I", "RR XI weakness → replacement"])
+
+    with submission_tab:
+        st.caption(
+            "Competition rankings use the supplied IPL + T20I data. Each PI variant is ranked independently, "
+            "then combined through weighted Reciprocal Rank Fusion."
+        )
+        rankings = data["rankings"]
+        if rankings.empty:
+            st.warning("Player rankings are missing. Run python run_analysis.py, then reopen the dashboard.")
+        else:
+            c1, c2, c3, c4, c5 = st.columns(5)
+            with c1:
+                final_half_life = st.selectbox("Recency horizon", ["365d", "540d", "180d", "730d", "unweighted"], index=0, key="final_rrf_half_life")
+            with c2:
+                final_min_balls = st.number_input("Minimum pressure balls", 0, 10000, 100, 10, key="final_rrf_min_balls")
+            with c3:
+                final_min_matches = st.number_input("Minimum matches", 0, 1000, 10, 1, key="final_rrf_min_matches")
+            with c4:
+                final_min_support = st.number_input("Minimum model support", 1, 5, 3, 1, key="final_rrf_min_support")
+            with c5:
+                final_max_days = st.number_input("Days since last pressure match", 30, 2000, 365, 30, key="final_rrf_max_days")
+
+            with st.spinner("Building final model-consensus lists..."):
+                final_ensemble = build_weighted_rrf_ensemble(
+                    rankings,
+                    min_deliveries=int(final_min_balls),
+                    min_matches=int(final_min_matches),
+                    half_life=final_half_life,
+                    max_days_since_last_match=int(final_max_days),
+                    min_model_support=int(final_min_support),
+                    method_weights=DEFAULT_RRF_WEIGHTS,
+                )
+            if final_ensemble.empty:
+                st.error("No candidates meet the current sample and model-support gates. Lower the thresholds or change the recency horizon.")
+            else:
+                batters_final = final_ensemble.loc[
+                    final_ensemble["role"].eq("Batter") & final_ensemble["ensemble_rank"].le(10)
+                ].sort_values("ensemble_rank").copy()
+                bowlers_final = final_ensemble.loc[
+                    final_ensemble["role"].eq("Bowler") & final_ensemble["ensemble_rank"].le(10)
+                ].sort_values("ensemble_rank").copy()
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Eligible batters", f"{(final_ensemble['role'] == 'Batter').sum():,}")
+                m2.metric("Eligible bowlers", f"{(final_ensemble['role'] == 'Bowler').sum():,}")
+                m3.metric("PI model weight", "95%")
+                m4.metric("Synthetic XGB weight", "5%")
+                if "pressure_uplift_per_100" not in rankings.columns:
+                    st.warning("These saved rankings predate personal-baseline uplift. Run python run_analysis.py again to regenerate the updated Top 10 lists.")
+
+                st.markdown("**Final top 10 batters**")
+                bat_cols = [
+                    "ensemble_rank", "player_name", "rrf_score", "mean_selection_score",
+                    "mean_pressure_uplift_per_100", "model_support", "min_pressure_deliveries_supported",
+                    "min_pressure_matches_supported", "rank_pi_baseline", "rank_pi_rrr_heavy",
+                    "rank_pi_momentum_heavy", "rank_pi_stakes_heavy", "rank_xgboost",
+                ]
+                bat_cols = [c for c in bat_cols if c in batters_final.columns]
+                st.dataframe(batters_final[bat_cols].rename(columns={
+                    "ensemble_rank": "Rank", "player_name": "Player", "rrf_score": "RRF score",
+                    "mean_selection_score": "Model score", "mean_pressure_uplift_per_100": "Pressure uplift / 100 balls",
+                    "model_support": "Models supporting", "min_pressure_deliveries_supported": "Min pressure balls",
+                    "min_pressure_matches_supported": "Min pressure matches",
+                }), use_container_width=True, hide_index=True)
+
+                st.markdown("**Final top 10 bowlers**")
+                bowl_cols = [c for c in bat_cols if c in bowlers_final.columns]
+                st.dataframe(bowlers_final[bowl_cols].rename(columns={
+                    "ensemble_rank": "Rank", "player_name": "Player", "rrf_score": "RRF score",
+                    "mean_selection_score": "Model score", "mean_pressure_uplift_per_100": "Wicket-rate uplift / 100 balls",
+                    "model_support": "Models supporting", "min_pressure_deliveries_supported": "Min pressure balls",
+                    "min_pressure_matches_supported": "Min pressure matches",
+                }), use_container_width=True, hide_index=True)
+
+                export_cols = [c for c in [
+                    "role", "ensemble_rank", "player_id", "player_name", "rrf_score",
+                    "mean_selection_score", "mean_pressure_uplift_per_100", "model_support",
+                    "model_weight_coverage", "min_pressure_deliveries_supported",
+                    "max_pressure_deliveries_supported", "min_pressure_matches_supported",
+                    "max_pressure_matches_supported", "days_since_last_pressure_match",
+                    "rank_pi_baseline", "rank_pi_rrr_heavy", "rank_pi_momentum_heavy",
+                    "rank_pi_stakes_heavy", "rank_xgboost",
+                ] if c in final_ensemble.columns]
+                final_export = pd.concat([batters_final, bowlers_final], ignore_index=True)
+                st.download_button(
+                    "Download combined final Top 10 + Top 10 CSV",
+                    data=final_export[export_cols].to_csv(index=False).encode("utf-8"),
+                    file_name=f"supeRR_final_top10_{final_half_life}.csv", mime="text/csv",
+                    key="download_final_supeer_top20",
+                )
+                c_bat, c_bowl = st.columns(2)
+                with c_bat:
+                    st.download_button(
+                        "Download batter Top 10", data=batters_final[export_cols].to_csv(index=False).encode("utf-8"),
+                        file_name=f"supeRR_top10_batters_{final_half_life}.csv", mime="text/csv",
+                        key="download_final_batters",
+                    )
+                with c_bowl:
+                    st.download_button(
+                        "Download bowler Top 10", data=bowlers_final[export_cols].to_csv(index=False).encode("utf-8"),
+                        file_name=f"supeRR_top10_bowlers_{final_half_life}.csv", mime="text/csv",
+                        key="download_final_bowlers",
+                    )
+                with st.expander("Ranking weights and interpretation"):
+                    st.write(pd.DataFrame([{"Method": k, "Weight": f"{v:.0%}"} for k, v in DEFAULT_RRF_WEIGHTS.items()]))
+                    st.markdown(
+                        "- PI baseline receives the largest vote; RRR-, momentum- and stakes-heavy PI variants test model sensitivity. "
+                        "Synthetic-trained XGBoost is a supporting 5% signal because its labels are generated from a designed teacher rule.\n"
+                        "- Batters are assessed when the batting side is under pressure. Bowlers are assessed when the defending side is under pressure, using the inverse chase state.\n"
+                        "- Batters combine pressure scoring rate with uplift over their own lower-pressure baseline. Bowlers combine wicket rate, economy, dot-ball rate and wicket-rate uplift.\n"
+                        "- RRF requires cross-model support; sample gates and recency control candidate reliability."
+                    )
+                st.warning("Verify spelling and dropdown eligibility before Unstop submission. Pressure uplift is a within-player comparison, not proof of a psychological trait.")
+
+    with rr_plan_tab:
+        st.caption(
+            "The XI is the most frequently listed RR playing XI in IPL 2026. Individual pressure records use RR chase deliveries "
+            "from IPL 2022–2026; replacements are drawn from the wider IPL player pool."
+        )
+        xi_review = data["rr_xi_review"]
+        replacement_shortlist = data["rr_replacements"]
+        if xi_review.empty:
+            st.info("RR review outputs are not available yet. Run the following after python run_analysis.py:")
+            st.code(
+                "python scripts/build_rr_intelligence.py --download --start-year 2022 --end-year 2026 --xi-season 2026\n"
+                "streamlit run dashboard/app.py",
+                language="bash",
+            )
+        else:
+            flagged = int(xi_review["weakness_status"].ne("No strong weakness signal").sum())
+            q1, q2, q3, q4 = st.columns(4)
+            q1.metric("XI role/phase profiles", f"{len(xi_review):,}")
+            q2.metric("Weakness / squad-need flags", f"{flagged:,}")
+            q3.metric("Replacement options", f"{len(replacement_shortlist):,}")
+            q4.metric("PI share of replacement score", "68%")
+
+            f1, f2, f3 = st.columns(3)
+            with f1:
+                review_role = st.selectbox("Role", ["All", "Batter", "Bowler"], key="rr_final_review_role")
+            with f2:
+                review_phase = st.selectbox("Phase", ["All", "Powerplay", "Middle", "Death"], key="rr_final_review_phase")
+            with f3:
+                review_status = st.selectbox(
+                    "Signal",
+                    ["All", "Pressure weakness supported by RR sample",
+                     "Squad need — individual RR pressure sample is limited", "No strong weakness signal"],
+                    key="rr_final_review_status",
+                )
+            filtered_review = xi_review.copy()
+            if review_role != "All":
+                filtered_review = filtered_review.loc[filtered_review["role"].eq(review_role)]
+            if review_phase != "All":
+                filtered_review = filtered_review.loc[filtered_review["phase"].eq(review_phase)]
+            if review_status != "All":
+                filtered_review = filtered_review.loc[filtered_review["weakness_status"].eq(review_status)]
+            review_cols = [c for c in [
+                "historical_xi_rank", "player_name", "role", "phase", "pi_type",
+                "team_need_score", "decision_score", "weakness_score", "weakness_status",
+                "rr_pi_pressure_deliveries", "rr_pi_pressure_matches", "pressure_sr_uplift",
+                "pressure_boundary_uplift", "pressure_dismissal_delta", "pressure_economy_delta",
+                "pressure_wicket_delta", "pressure_dot_delta", "weakness_reason",
+            ] if c in filtered_review.columns]
+            st.dataframe(filtered_review[review_cols].rename(columns={
+                "historical_xi_rank": "2026 XI rank", "player_name": "Player", "pi_type": "Selected PI",
+                "team_need_score": "RR phase need", "decision_score": "All-IPL PI/XGB score",
+                "weakness_score": "Weakness score", "weakness_status": "Finding",
+                "rr_pi_pressure_deliveries": "RR PI pressure balls", "rr_pi_pressure_matches": "RR PI pressure matches",
+                "pressure_sr_uplift": "Pressure SR uplift", "pressure_boundary_uplift": "Boundary-rate uplift",
+                "pressure_dismissal_delta": "Dismissal delta / 100", "pressure_economy_delta": "Pressure economy delta",
+                "pressure_wicket_delta": "Wicket-rate delta / 100", "pressure_dot_delta": "Dot-rate delta",
+                "weakness_reason": "Evidence",
+            }), use_container_width=True, hide_index=True)
+
+            st.markdown("#### Phase-matched replacement shortlist")
+            if replacement_shortlist.empty:
+                st.info("No candidate cleared the available role/phase pressure sample gates.")
+            else:
+                replacements_for = sorted(replacement_shortlist["replaces_player"].dropna().unique().tolist())
+                selected_weak_player = st.selectbox("Replace which XI player?", replacements_for, key="rr_replacement_target")
+                repl = replacement_shortlist.loc[
+                    replacement_shortlist["replaces_player"].eq(selected_weak_player)
+                ].sort_values(["weak_role", "weak_phase", "replacement_rank"])
+                repl_cols = [c for c in [
+                    "weak_role", "weak_phase", "replacement_rank", "player_name", "candidate_score",
+                    "decision_score", "pi_type", "pi_performance_score", "xgb_performance_score",
+                    "pi_pressure_deliveries", "pi_pressure_matches", "xgb_pressure_deliveries",
+                    "player_fit_score", "franchises", "candidate_sample_status",
+                    "candidate_fit_reason", "availability_status",
+                ] if c in repl.columns]
+                st.dataframe(repl[repl_cols].rename(columns={
+                    "weak_role": "Role", "weak_phase": "Phase", "replacement_rank": "Replacement rank",
+                    "player_name": "Candidate", "candidate_score": "Candidate score",
+                    "decision_score": "80/20 PI/XGB score", "pi_type": "Selected PI",
+                    "pi_performance_score": "PI performance", "xgb_performance_score": "XGB performance",
+                    "pi_pressure_deliveries": "PI pressure balls", "pi_pressure_matches": "PI pressure matches",
+                    "xgb_pressure_deliveries": "XGB pressure balls", "player_fit_score": "Role/phase fit",
+                    "franchises": "Observed franchises", "candidate_sample_status": "Sample gate",
+                    "candidate_fit_reason": "Fit rationale", "availability_status": "Availability",
+                }), use_container_width=True, hide_index=True)
+                st.download_button(
+                    "Download RR replacement shortlist",
+                    data=replacement_shortlist.to_csv(index=False).encode("utf-8"),
+                    file_name="rr_xi_replacement_shortlist.csv", mime="text/csv",
+                    key="download_rr_replacements",
+                )
+            st.info(
+                "Replacement score = 85% phase PI/XGBoost decision score + 15% player-fit score. The phase model is 80% PI / 20% synthetic XGBoost. "
+                "Powerplay uses baseline PI, Middle uses momentum-heavy PI, and Death uses RRR-situation-heavy PI. "
+                "Candidates exclude the current XI and normally need at least 20 PI-pressure deliveries over 3 matches; relaxed gates are labelled."
+            )
+            st.warning(
+                "The frequent XI is historical IPL 2026 usage, not an official 2027 retained squad. "
+                "Auction availability, overseas slots, budget and retention status are not inferred."
+            )
 
 
 st.divider()
