@@ -254,7 +254,7 @@ def _rr_player_phase_record(rr_rows: pd.DataFrame, role: str, phase: str, rr_tea
         id_col, name_col = "batter_id", "batter"
         pi_high, pi_base, xgb_high = "phase_pi_high", "phase_pi_baseline", "xgb_batting_high"
     else:
-        d = d.loc[d["bowling_team"].eq(rr_team) & _as_bool(d["is_legal_ball"])].copy()
+        d = d.loc[d["bowling_team"].eq(rr_team)].copy()
         id_col, name_col = "bowler_id", "bowler"
         pi_high, pi_base, xgb_high = "phase_bowling_pi_high", "phase_bowling_pi_baseline", "xgb_bowling_high"
     if d.empty:
