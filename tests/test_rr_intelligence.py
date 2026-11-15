@@ -100,7 +100,7 @@ def test_build_outputs_separate_rr_diagnostics_from_all_ipl_candidate_pool(tmp_p
     pressure = pd.read_csv(paths["rr_pressure_points"])
     fit = pd.read_csv(paths["player_fit_shortlist"])
 
-    assert len(matches) == 1
+    assert len(matches) == 2  # RR diagnostics retain both seasons in the requested analysis range.
     assert all_deliveries["match_id"].nunique() == 3
     assert rr_deliveries["match_id"].nunique() == 2
     assert not pressure.empty
