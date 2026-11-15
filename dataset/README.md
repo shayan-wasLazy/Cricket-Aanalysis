@@ -66,3 +66,17 @@ JSON format: https://cricsheet.org/format/json/
 Licence and attribution: https://cricsheet.org/licensing/
 
 The source archive and competition-provided files are not committed. Preserve Cricsheet's ODC-By attribution and licence obligations if publishing derived data.
+
+
+### Required model for PI / XGBoost phase ranking
+
+The RR phase selector uses the same trained model saved by the main project analysis:
+
+models/synthetic_pressure_xgb.json
+
+Run the main analysis once before the RR build if the model file does not exist:
+
+python run_analysis.py
+python scripts/build_rr_intelligence.py --download --start-year 2022 --end-year 2026
+
+Do not commit the model file or generated RR outputs; both are ignored by Git.

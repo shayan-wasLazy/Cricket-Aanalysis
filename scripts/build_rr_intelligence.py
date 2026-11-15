@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from cricket_pressure.rr_intelligence import build_rr_intelligence, download_cricsheet_archive  # noqa: E402
+from xgboost import XGBClassifier  # noqa: E402
 
 
 def main() -> None:
@@ -21,6 +22,8 @@ def main() -> None:
     parser.add_argument("--start-year", type=int, default=2022)
     parser.add_argument("--end-year", type=int, default=2026)
     parser.add_argument("--team", default="Rajasthan Royals")
+    parser.add_argument("--model-path", type=Path, default=ROOT / "models" / "synthetic_pressure_xgb.json",
+                        help="Path to the XGBoost synthetic-pressure model saved by python run_analysis.py.")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "outputs" / "rr_intelligence")
     args = parser.parse_args()
 
@@ -28,9 +31,17 @@ def main() -> None:
     source = download_cricsheet_archive(args.source or archive) if args.download else (args.source or archive)
     if not source.exists():
         parser.error(f"Source not found: {source}. Use --download or provide --source.")
+    if not args.model_path.exists():
+        parser.error(
+            f"XGBoost model not found: {args.model_path}. Run python run_analysis.py first "
+            "to train/save models/synthetic_pressure_xgb.json."
+        )
+    model = XGBClassifier()
+    model.load_model(args.model_path)
     build_rr_intelligence(
         source=source, output_dir=args.output_dir,
-        start_year=args.start_year, end_year=args.end_year, rr_team=args.team,
+        start_year=args.start_year, end_year=args.end_year,
+        rr_team=args.team, xgb_model=model,
     )
 
 

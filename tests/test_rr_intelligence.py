@@ -1,6 +1,7 @@
 import json
 import zipfile
 
+import numpy as np
 import pandas as pd
 
 from cricket_pressure.rr_intelligence import build_rr_intelligence, parse_cricsheet_match
@@ -50,6 +51,7 @@ def _match(rr_match=True):
             "dates": ["2022-04-01"], "season": "2022", "overs": 20,
             "event": {"name": "Indian Premier League"}, "teams": teams,
             "venue": "Test Ground", "outcome": {"winner": teams[0]},
+            "players": {teams[0]: [bat1, bowl2], teams[1]: [bat2, bowl1]},
             "registry": {"people": {
                 bat1: "batter-id-1", bowl1: "bowler-id-1",
                 bat2: "batter-id-2", bowl2: "bowler-id-2",
@@ -76,13 +78,18 @@ def test_parser_reconstructs_ball_state_and_wide_accounting():
     assert chase["is_bowling_high_pressure"].notna().all()
 
 
+class DummyPressureXGB:
+    def predict_proba(self, features):
+        return np.tile(np.array([[0.05, 0.10, 0.25, 0.60]]), (len(features), 1))
+
+
 def test_build_outputs_separate_rr_diagnostics_from_all_ipl_candidate_pool(tmp_path):
     archive = tmp_path / "ipl_json.zip"
     with zipfile.ZipFile(archive, "w") as zf:
         for rr_match in [True, False]:
             name, payload = _match(rr_match)
             zf.writestr(name, json.dumps(payload))
-    paths = build_rr_intelligence(archive, tmp_path / "out", 2022, 2026)
+    paths = build_rr_intelligence(archive, tmp_path / "out", 2022, 2026, xgb_model=DummyPressureXGB())
 
     matches = pd.read_csv(paths["rr_matches"])
     all_deliveries = pd.read_csv(paths["all_ipl_deliveries"])
@@ -97,3 +104,9 @@ def test_build_outputs_separate_rr_diagnostics_from_all_ipl_candidate_pool(tmp_p
     assert pressure["pressure_index"].min() >= 60
     assert {"Batter", "Bowler"}.issubset(set(fit["role"]))
     assert paths["report"].exists()
+    frequent_xi = pd.read_csv(paths["frequent_xi"])
+    phase_rankings = pd.read_csv(paths["phase_player_rankings"])
+    phase_options = pd.read_csv(paths["frequent_xi_phase_options"])
+    assert frequent_xi["player_name"].tolist() == ["RR Batter", "RR Bowler"] or set(frequent_xi["player_name"]) == {"RR Batter", "RR Bowler"}
+    assert {"pi_performance_score", "xgb_performance_score", "decision_score"}.issubset(phase_rankings.columns)
+    assert len(phase_options) == len(frequent_xi) * 6

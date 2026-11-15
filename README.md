@@ -333,3 +333,26 @@ The Streamlit dashboard contains an **RR squad intelligence** tab after the RRF 
 - Candidate player scores are relative, within-role and within-phase performance percentiles; they are not absolute quality ratings.
 - The candidate shortlist does not establish 2027 auction availability, retention status, overseas-slot fit, expected price or squad balance. Join it to an authoritative auction/retention list before making acquisition recommendations.
 - Preserve Cricsheet attribution and comply with its ODC-By licence when redistributing derived data.
+
+
+### PI / XGBoost phase selector and historical RR frequent XI
+
+The RR build loads the saved synthetic_pressure_xgb.json model and applies the repository's canonical Pressure Index weights and XGBoost feature order to Cricsheet-derived chase states.
+
+- Batting pressure uses the project's canonical pressure_index and XGBoost pressure score.
+- Bowling pressure is the inverse of each chase score (100 minus batter-side pressure), so a comfortable chase is treated as greater stress on the defending bowling side.
+- Players are ranked within role and phase using performance in model-identified high-pressure deliveries: batters by strike rate, boundary rate and dismissal avoidance; bowlers by economy, wickets and dot-ball rate.
+- The decision score uses 80% PI performance percentile and 20% synthetic-XGBoost performance percentile. If a player lacks enough sample for one signal, available weights are renormalised and coverage is shown.
+- Minimum delivery and match gates can be adjusted in the dashboard.
+
+The PI/XGB phase selector & RR XI tab provides:
+- A phase selector for Powerplay, Middle and Death, for batters and bowlers, across all IPL players or the historical RR frequent XI.
+- The 11 players most frequently listed in RR playing XIs for the selected seasons.
+- Six phase options for each frequent-XI player: batting and bowling in Powerplay, Middle and Death.
+
+New outputs:
+- outputs/rr_intelligence/rr_phase_player_rankings.csv
+- outputs/rr_intelligence/rr_frequent_xi.csv
+- outputs/rr_intelligence/rr_frequent_xi_phase_options.csv
+
+Important: XGBoost is trained on synthetic teacher labels, so it is a supporting signal and not empirically validated psychological-pressure ground truth. The frequent XI is a historical 2022–2026 usage summary, not the official 2027 squad. Confirm current retention and auction availability independently.

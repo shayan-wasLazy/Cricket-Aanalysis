@@ -22,6 +22,6 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install numpy pandas scipy scikit-learn xgboost pytest tabulate
       - name: Compile Python source
-        run: python -m compileall -q cricket_pressure dashboard run_analysis.py refresh_player_rankings.py
+        run: python -m compileall -q cricket_pressure dashboard scripts run_analysis.py refresh_player_rankings.py
       - name: Run unit tests
         run: python -m pytest -q

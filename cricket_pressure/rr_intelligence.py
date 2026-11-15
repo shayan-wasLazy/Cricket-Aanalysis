@@ -517,18 +517,18 @@ def _write_report(path: Path, matches: pd.DataFrame, rr_deliveries: pd.DataFrame
 
 def build_rr_intelligence(source: str | Path, output_dir: str | Path,
                           start_year: int = 2022, end_year: int = 2026,
-                          rr_team: str = "Rajasthan Royals") -> dict[str, Path]:
+                          rr_team: str = "Rajasthan Royals",
+                          xgb_model: Any | None = None) -> dict[str, Path]:
     """Generate RR-only match outputs and all-IPL candidate-fit rankings."""
     if start_year > end_year:
         raise ValueError("start_year must be <= end_year")
     frames = []
     source_path = Path(source)
-    is_ipl_zip = source_path.is_file() and source_path.suffix.lower() == ".zip"
     for source_name, payload in _iter_json_payloads(source):
         info = payload.get("info") or {}
         event_name = str((info.get("event") or {}).get("name", "")).lower()
         teams = info.get("teams") or []
-        if not is_ipl_zip and "indian premier league" not in event_name and rr_team not in teams:
+        if "indian premier league" not in event_name:
             continue
         frame = parse_cricsheet_match(payload, source_name)
         if frame.empty:
@@ -539,11 +539,23 @@ def build_rr_intelligence(source: str | Path, output_dir: str | Path,
     if not frames:
         raise ValueError(f"No IPL match JSON found for seasons {start_year}–{end_year}.")
     all_ipl = pd.concat(frames, ignore_index=True)
+    from .rr_selection import (
+        add_project_pressure_scores, build_frequent_xi,
+        build_phase_player_rankings, build_frequent_xi_phase_options,
+    )
+    all_ipl = add_project_pressure_scores(all_ipl, xgb_model)
     all_ipl["is_rr_match"] = all_ipl["team_1"].eq(rr_team) | all_ipl["team_2"].eq(rr_team)
     rr_ids = set(all_ipl.loc[all_ipl["is_rr_match"], "match_id"])
     if not rr_ids:
         raise ValueError(f"No {rr_team} matches found in the selected seasons.")
     rr_deliveries = all_ipl.loc[all_ipl["match_id"].isin(rr_ids)].copy()
+    frequent_xi = build_frequent_xi(
+        source, rr_deliveries, start_year, end_year, rr_team
+    )
+    phase_rankings = build_phase_player_rankings(all_ipl)
+    frequent_xi_phase_options = build_frequent_xi_phase_options(
+        frequent_xi, phase_rankings
+    )
     rr_matches = _match_summary(rr_deliveries, rr_team)
     pressure_points = rr_deliveries.loc[rr_deliveries["is_high_pressure"]].copy()
     windows = _pressure_windows(pressure_points)
@@ -561,6 +573,9 @@ def build_rr_intelligence(source: str | Path, output_dir: str | Path,
         "rr_pressure_windows": out / "rr_pressure_windows.csv",
         "rr_phase_gaps": out / "rr_phase_gaps.csv",
         "player_fit_shortlist": out / "rr_player_fit_shortlist.csv",
+        "phase_player_rankings": out / "rr_phase_player_rankings.csv",
+        "frequent_xi": out / "rr_frequent_xi.csv",
+        "frequent_xi_phase_options": out / "rr_frequent_xi_phase_options.csv",
         "report": out / "rr_intelligence_report.md",
     }
     all_ipl.to_csv(paths["all_ipl_deliveries"], index=False, compression="gzip")
@@ -573,8 +588,34 @@ def build_rr_intelligence(source: str | Path, output_dir: str | Path,
     windows.to_csv(paths["rr_pressure_windows"], index=False)
     gaps.to_csv(paths["rr_phase_gaps"], index=False)
     shortlist.to_csv(paths["player_fit_shortlist"], index=False)
+    phase_rankings.to_csv(paths["phase_player_rankings"], index=False)
+    frequent_xi.to_csv(paths["frequent_xi"], index=False)
+    frequent_xi_phase_options.to_csv(paths["frequent_xi_phase_options"], index=False)
     _write_report(paths["report"], rr_matches, rr_deliveries, windows, gaps, shortlist,
                   start_year, end_year, rr_team)
+    with paths["report"].open("a", encoding="utf-8") as report:
+        report.write("\n\n## PI / XGBoost phase selector\n\n")
+        report.write(
+            "The phase selector uses the repository's exact PI weights and the saved synthetic-pressure "
+            "XGBoost model. The combined player decision score is 80% PI performance percentile and "
+            "20% XGBoost performance percentile, renormalised when a model has insufficient sample. "
+            "XGBoost learns synthetic teacher labels and is therefore a low-weight supporting signal, "
+            "not empirical psychological-pressure ground truth.\n\n"
+        )
+        report.write("## Historical RR frequent XI\n\n")
+        report.write(
+            frequent_xi[["historical_xi_rank", "player_name", "appearances", "usage_profile"]]
+            .to_markdown(index=False) if not frequent_xi.empty else "Playing-XI lists were unavailable."
+        )
+        report.write("\n\n## Per-phase options for every frequent-XI player\n\n")
+        report.write(
+            frequent_xi_phase_options[[
+                "historical_xi_rank", "player_name", "role", "phase",
+                "decision_score", "phase_option_status",
+            ]].to_markdown(index=False)
+            if not frequent_xi_phase_options.empty else "No phase options were available."
+        )
+        report.write("\n\n")
     print(f"IPL matches: {all_ipl['match_id'].nunique():,} | deliveries: {len(all_ipl):,}")
     print(f"RR matches: {len(rr_matches):,} | RR deliveries: {len(rr_deliveries):,}")
     print(f"RR high-pressure chase deliveries: {len(pressure_points):,}")

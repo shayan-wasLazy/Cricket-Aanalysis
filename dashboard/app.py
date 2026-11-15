@@ -47,7 +47,12 @@ if not PROC.exists() or not MODEL_PATH.exists():
     st.stop()
 
 def _read_optional(path: Path) -> pd.DataFrame:
-    return pd.read_csv(path, low_memory=False) if path.exists() else pd.DataFrame()
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(path, low_memory=False)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame()
 
 @st.cache_data(show_spinner=False)
 def load_data():
@@ -74,6 +79,9 @@ def load_data():
         "rr_pressure_windows": _read_optional(OUT / "rr_intelligence" / "rr_pressure_windows.csv"),
         "rr_phase_gaps": _read_optional(OUT / "rr_intelligence" / "rr_phase_gaps.csv"),
         "rr_player_fit": _read_optional(OUT / "rr_intelligence" / "rr_player_fit_shortlist.csv"),
+        "rr_phase_rankings": _read_optional(OUT / "rr_intelligence" / "rr_phase_player_rankings.csv"),
+        "rr_frequent_xi": _read_optional(OUT / "rr_intelligence" / "rr_frequent_xi.csv"),
+        "rr_frequent_xi_options": _read_optional(OUT / "rr_intelligence" / "rr_frequent_xi_phase_options.csv"),
 
     }
 
@@ -147,7 +155,7 @@ with right:
 tabs = st.tabs([
     "Synthetic diagnostics", "Scenario playground", "Weight lab",
     "Match disagreement", "Player rankings", "Historical win model", "Score audit", "Recency analysis",
-    "RRF ensemble shortlist", "RR squad intelligence",
+    "RRF ensemble shortlist", "RR squad intelligence", "PI/XGB phase selector & RR XI",
 ])
 
 with tabs[0]:
@@ -795,6 +803,165 @@ with tabs[9]:
             use_container_width=True, hide_index=True,
         )
 
+
+
+
+with tabs[10]:
+    st.subheader("Phase-wise player selector — PI + XGBoost")
+    st.caption(
+        "Ranks players by performance in high-pressure deliveries for the selected role and phase. "
+        "PI is the primary signal; the synthetic-trained XGBoost contributes a smaller supporting weight."
+    )
+    phase_rankings = data["rr_phase_rankings"]
+    frequent_xi = data["rr_frequent_xi"]
+    xi_options = data["rr_frequent_xi_options"]
+
+    selector_tab, xi_tab = st.tabs(["Phase-wise player options", "RR historical frequent XI"])
+
+    with selector_tab:
+        if phase_rankings.empty:
+            st.info("Phase rankings have not been generated. Re-run the RR intelligence build after pulling the latest code.")
+            st.code("python scripts/build_rr_intelligence.py --download --start-year 2022 --end-year 2026", language="bash")
+        else:
+            c1, c2 = st.columns(2)
+            with c1:
+                selection_role = st.selectbox("Player role", ["Batter", "Bowler"], key="pi_xgb_role")
+            with c2:
+                selection_phase = st.selectbox("Match phase", ["Powerplay", "Middle", "Death"], key="pi_xgb_phase")
+            c3, c4, c5 = st.columns(3)
+            with c3:
+                selection_pool = st.selectbox(
+                    "Player pool", ["All IPL players", "RR historical frequent XI only"], key="pi_xgb_pool"
+                )
+            with c4:
+                min_pressure_balls = st.number_input(
+                    "Minimum pressure deliveries per model", min_value=0, max_value=10000,
+                    value=20, step=5, key="pi_xgb_min_balls",
+                )
+            with c5:
+                min_pressure_matches = st.number_input(
+                    "Minimum pressure matches per model", min_value=0, max_value=1000,
+                    value=3, step=1, key="pi_xgb_min_matches",
+                )
+
+            candidates = phase_rankings.loc[
+                phase_rankings["role"].eq(selection_role)
+                & phase_rankings["phase"].eq(selection_phase)
+            ].copy()
+            if selection_pool == "RR historical frequent XI only":
+                xi_ids = set(frequent_xi["player_id"].astype(str)) if not frequent_xi.empty else set()
+                candidates = candidates.loc[candidates["player_key"].astype(str).isin(xi_ids)]
+
+            pi_ok = (
+                candidates["pi_performance_score"].notna()
+                & candidates["pi_pressure_deliveries"].fillna(0).ge(min_pressure_balls)
+                & candidates["pi_pressure_matches"].fillna(0).ge(min_pressure_matches)
+            )
+            xgb_ok = (
+                candidates["xgb_performance_score"].notna()
+                & candidates["xgb_pressure_deliveries"].fillna(0).ge(min_pressure_balls)
+                & candidates["xgb_pressure_matches"].fillna(0).ge(min_pressure_matches)
+            )
+            coverage = 0.80 * pi_ok.astype(float) + 0.20 * xgb_ok.astype(float)
+            weighted = (
+                0.80 * candidates["pi_performance_score"].where(pi_ok, 0).fillna(0)
+                + 0.20 * candidates["xgb_performance_score"].where(xgb_ok, 0).fillna(0)
+            )
+            candidates["model_weight_coverage"] = coverage
+            candidates["decision_score"] = weighted.div(coverage.replace(0, np.nan))
+            candidates = candidates.loc[coverage.gt(0)].copy()
+            candidates["decision_rank"] = candidates["decision_score"].rank(method="min", ascending=False)
+            candidates = candidates.sort_values(["decision_score", "phase_deliveries"], ascending=[False, False])
+
+            q1, q2, q3, q4 = st.columns(4)
+            q1.metric("Eligible players", f"{len(candidates):,}")
+            q2.metric("PI weight", "80%")
+            q3.metric("XGBoost weight", "20%")
+            q4.metric("Top decision score", f"{candidates['decision_score'].iloc[0]:.1f}/100" if not candidates.empty else "—")
+            if candidates.empty:
+                st.warning("No player meets the current per-model sample thresholds. Lower the gates or switch to the full IPL pool.")
+            else:
+                show = [
+                    "decision_rank", "player_name", "decision_score", "model_weight_coverage",
+                    "pi_performance_score", "pi_pressure_deliveries", "pi_pressure_matches",
+                    "pi_mean_pressure_score", "xgb_performance_score",
+                    "xgb_pressure_deliveries", "xgb_pressure_matches",
+                    "xgb_mean_pressure_score", "phase_deliveries", "phase_matches",
+                ]
+                show = [c for c in show if c in candidates.columns]
+                st.dataframe(candidates[show].rename(columns={
+                    "decision_rank": "Rank", "player_name": "Player",
+                    "decision_score": "PI/XGB decision score",
+                    "model_weight_coverage": "Model weight coverage",
+                    "pi_performance_score": "PI performance percentile",
+                    "pi_pressure_deliveries": "PI pressure balls",
+                    "pi_pressure_matches": "PI pressure matches",
+                    "pi_mean_pressure_score": "Mean PI pressure",
+                    "xgb_performance_score": "XGB performance percentile",
+                    "xgb_pressure_deliveries": "XGB pressure balls",
+                    "xgb_pressure_matches": "XGB pressure matches",
+                    "xgb_mean_pressure_score": "Mean XGB pressure",
+                    "phase_deliveries": "Total phase deliveries",
+                    "phase_matches": "Total phase matches",
+                }), use_container_width=True, hide_index=True)
+                fig = px.bar(
+                    candidates.head(15).sort_values("decision_score"), x="decision_score",
+                    y="player_name", orientation="h",
+                    title=f"Top {selection_role.lower()} options — {selection_phase}",
+                    labels={"decision_score": "80% PI / 20% XGBoost score", "player_name": "Player"},
+                )
+                fig.update_layout(height=480, margin=dict(l=10, r=10, t=40, b=10))
+                st.plotly_chart(fig, use_container_width=True)
+            st.info(
+                "Batters are scored on strike rate, boundary rate and dismissal avoidance in high-pressure balls. "
+                "Bowlers are scored on economy, wickets and dot-ball rate when the defending side is under pressure. "
+                "The PI/XG scores identify the pressure deliveries; performance metrics determine who handled them best."
+            )
+            st.warning(
+                "The XGBoost model was trained on synthetic teacher labels. Its score is a supporting signal, "
+                "not validated psychological-pressure ground truth. Review PI-only and XGB-only scores and sample sizes."
+            )
+
+    with xi_tab:
+        st.subheader("RR historical frequent XI")
+        st.caption(
+            "The 11 most frequently listed Rajasthan Royals playing-XI members across the selected IPL seasons. "
+            "This is a historical usage list, not a claim about the current or 2027 retained squad."
+        )
+        if frequent_xi.empty:
+            st.info("No playing-XI list was found. The pipeline falls back to observed RR batters and bowlers.")
+        else:
+            xi_cols = [
+                "historical_xi_rank", "player_name", "appearances", "first_season", "last_season",
+                "usage_profile", "rr_batting_balls", "rr_batting_runs", "rr_batting_strike_rate",
+                "rr_bowling_legal_balls", "rr_bowling_wickets", "rr_bowling_economy",
+            ]
+            xi_cols = [c for c in xi_cols if c in frequent_xi.columns]
+            st.dataframe(frequent_xi[xi_cols], use_container_width=True, hide_index=True)
+            st.markdown("#### Each frequent-XI player's batting and bowling options by phase")
+            if xi_options.empty:
+                st.info("No phase options generated.")
+            else:
+                option_cols = [
+                    "historical_xi_rank", "player_name", "role", "phase",
+                    "decision_score", "decision_rank", "pi_performance_score",
+                    "pi_pressure_deliveries", "xgb_performance_score",
+                    "xgb_pressure_deliveries", "phase_option_status",
+                ]
+                option_cols = [c for c in option_cols if c in xi_options.columns]
+                st.dataframe(xi_options[option_cols].rename(columns={
+                    "historical_xi_rank": "XI rank", "player_name": "Player",
+                    "role": "Option", "phase": "Phase", "decision_score": "PI/XGB score",
+                    "decision_rank": "Phase rank", "pi_performance_score": "PI percentile",
+                    "pi_pressure_deliveries": "PI pressure balls",
+                    "xgb_performance_score": "XGB percentile",
+                    "xgb_pressure_deliveries": "XGB pressure balls",
+                    "phase_option_status": "Sample status",
+                }), use_container_width=True, hide_index=True)
+                st.caption(
+                    "Every player appears in all six options: batting and bowling in Powerplay, Middle and Death. "
+                    "A missing score means the player has no qualifying high-pressure sample for that option."
+                )
 
 
 st.divider()
