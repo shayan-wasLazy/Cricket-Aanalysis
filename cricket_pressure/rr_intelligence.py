@@ -547,8 +547,8 @@ def build_rr_intelligence(source: str | Path, output_dir: str | Path,
     from .rr_selection import (
         add_project_pressure_scores, build_frequent_xi,
         build_phase_player_rankings, build_frequent_xi_phase_options,
-        build_rr_weakness_replacements,
     )
+    from .rr_final_decisions import build_rr_weakness_replacements
     all_ipl = add_project_pressure_scores(all_ipl, xgb_model)
     all_ipl["is_rr_match"] = all_ipl["team_1"].eq(rr_team) | all_ipl["team_2"].eq(rr_team)
     rr_ids = set(all_ipl.loc[all_ipl["is_rr_match"], "match_id"])
