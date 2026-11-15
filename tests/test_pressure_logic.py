@@ -110,8 +110,58 @@ def test_player_rankings_include_all_recency_settings():
     ranks = build_player_rankings(
         rows, min_deliveries=1, min_matches=1, prior_deliveries=1
     )
-    assert set(ranks["half_life"].unique()) == {"unweighted","365d","540d","730d"}
+    assert set(ranks["half_life"].unique()) == {"unweighted","180d","365d","540d","730d"}
     batter = ranks.loc[
         ranks["role"].eq("Batter") & ranks["scoring_method"].eq("PI baseline")
     ]
     assert batter["weighted_per_100"].notna().all()
+
+
+
+def test_player_recency_uses_current_selection_date_and_exposes_inactivity():
+    rows = pd.DataFrame({
+        "match_id": [1, 2],
+        "match_date": pd.to_datetime(["2024-11-15", "2026-11-01"], utc=True),
+        "striker_id": [10, 20],
+        "striker_name": ["Inactive Player", "Active Player"],
+        "bowler_id": [30, 40],
+        "bowler_name": ["Old Bowler", "Recent Bowler"],
+        "runs": [6, 4],
+        "is_wicket": [False, False],
+        "dismissed_player_id": [np.nan, np.nan],
+        "dismissal_type": ["", ""],
+        "pressure_index": [75.0, 75.0],
+        "xgb_pressure_score": [75.0, 75.0],
+    })
+    reference = "2026-11-15"
+    rankings = build_player_rankings(
+        rows,
+        min_deliveries=1,
+        min_matches=1,
+        prior_deliveries=10,
+        half_lives_days=(180,),
+        reference_date=reference,
+    )
+    batters = rankings.loc[
+        rankings["role"].eq("Batter")
+        & rankings["scoring_method"].eq("PI baseline")
+        & rankings["half_life"].eq("180d")
+    ].set_index("player_name")
+
+    assert batters.loc["Inactive Player", "weighted_deliveries"] < (
+        batters.loc["Active Player", "weighted_deliveries"] * 0.1
+    )
+    assert batters.loc["Inactive Player", "days_since_last_pressure_match"] > 700
+    assert batters.loc["Inactive Player", "recent_pressure_matches_365d"] == 0
+    assert batters.loc["Active Player", "recent_pressure_matches_365d"] == 1
+    assert batters["recency_reference_date"].eq("2026-11-15T00:00:00+00:00").all()
+
+
+def test_180_day_half_life_reduces_two_year_old_match_to_about_six_percent():
+    dates = pd.Series(pd.to_datetime(["2024-11-15", "2026-11-15"], utc=True))
+    weights, reference = exponential_recency_weights(
+        dates, half_life_days=180, reference_date="2026-11-15"
+    )
+    assert np.isclose(weights.iloc[0], 0.0625, atol=1e-6)
+    assert np.isclose(weights.iloc[1], 1.0)
+    assert str(reference.date()) == "2026-11-15"
