@@ -268,3 +268,191 @@ def compare_top10_rankings(rankings: pd.DataFrame, top_n: int = 10) -> pd.DataFr
         .sort_values(["role", "half_life_days", "scoring_method", "rank"])
         .copy()
     )
+
+
+# Weighted Reciprocal Rank Fusion settings. These are intentionally not equal:
+# the transparent PI baseline gets the largest vote; its sensitivity variants
+# get progressively smaller votes; synthetic-trained XGBoost gets only 5%
+# because its labels come from a constructed teacher rule, not empirical
+# pressure ground truth.
+DEFAULT_RRF_WEIGHTS = {
+    "PI baseline": 0.35,
+    "PI RRR-heavy": 0.25,
+    "PI momentum-heavy": 0.20,
+    "PI stakes-heavy": 0.15,
+    "XGBoost": 0.05,
+}
+DEFAULT_RRF_K = 60
+DEFAULT_RRF_MIN_MODEL_SUPPORT = 3
+
+
+def build_weighted_rrf_ensemble(
+    rankings: pd.DataFrame,
+    min_deliveries: int = DEFAULT_MIN_DELIVERIES,
+    min_matches: int = DEFAULT_MIN_MATCHES,
+    half_life: str | None = "180d",
+    max_days_since_last_match: int | None = 365,
+    min_model_support: int = DEFAULT_RRF_MIN_MODEL_SUPPORT,
+    rrf_k: int = DEFAULT_RRF_K,
+    method_weights: dict[str, float] | None = None,
+) -> pd.DataFrame:
+    """Build an eligibility-aware, weighted Reciprocal Rank Fusion shortlist.
+
+    Each scoring method is ranked independently after applying the current
+    sample-size and activity gates. A player's RRF score is the weighted sum
+    of 1 / (rrf_k + model_rank). Missing model ranks contribute zero, and a
+    minimum number of model appearances is required before a player can enter
+    the ensemble. No final Top-10 decision is made here.
+    """
+    if rankings.empty:
+        return pd.DataFrame()
+    if min_deliveries < 0 or min_matches < 0:
+        raise ValueError("Minimum deliveries and matches cannot be negative")
+    if min_model_support < 1:
+        raise ValueError("min_model_support must be at least 1")
+    if rrf_k < 0:
+        raise ValueError("rrf_k cannot be negative")
+
+    weights = dict(method_weights or DEFAULT_RRF_WEIGHTS)
+    if not weights:
+        raise ValueError("At least one scoring-method weight is required")
+    if any((not np.isfinite(v)) or v <= 0 for v in weights.values()):
+        raise ValueError("RRF method weights must be finite and positive")
+    if not np.isclose(sum(weights.values()), 1.0, atol=1e-8):
+        raise ValueError("RRF method weights must sum to 1.0")
+    missing_columns = {"role", "scoring_method", "half_life", "player_id",
+                       "player_name", "pressure_deliveries", "pressure_matches",
+                       "shrunk_per_100"} - set(rankings.columns)
+    if missing_columns:
+        raise ValueError(f"Rankings are missing RRF columns: {sorted(missing_columns)}")
+
+    data = rankings.copy()
+    if half_life is not None:
+        data = data.loc[data["half_life"].eq(half_life)].copy()
+    if data.empty:
+        return pd.DataFrame()
+
+    output_frames = []
+    half_lives = sorted(data["half_life"].dropna().astype(str).unique())
+    for half in half_lives:
+        half_data = data.loc[data["half_life"].eq(half)]
+        for role in ("Batter", "Bowler"):
+            role_data = half_data.loc[half_data["role"].eq(role)].copy()
+            if role_data.empty:
+                continue
+
+            method_frames = []
+            for method, weight in weights.items():
+                candidates = role_data.loc[role_data["scoring_method"].eq(method)].copy()
+                if candidates.empty:
+                    continue
+                eligible = (
+                    pd.to_numeric(candidates["pressure_deliveries"], errors="coerce").ge(min_deliveries)
+                    & pd.to_numeric(candidates["pressure_matches"], errors="coerce").ge(min_matches)
+                    & pd.to_numeric(candidates["player_id"], errors="coerce").notna()
+                    & pd.to_numeric(candidates["shrunk_per_100"], errors="coerce").notna()
+                )
+                if max_days_since_last_match is not None and "days_since_last_pressure_match" in candidates:
+                    eligible &= pd.to_numeric(
+                        candidates["days_since_last_pressure_match"], errors="coerce"
+                    ).le(max_days_since_last_match)
+                candidates = candidates.loc[eligible].copy()
+                if candidates.empty:
+                    continue
+
+                # One row per player ID per model; names are descriptive, IDs
+                # are the stable key used to aggregate rankings across models.
+                candidates["player_id"] = pd.to_numeric(candidates["player_id"], errors="coerce")
+                candidates = candidates.sort_values(
+                    ["shrunk_per_100", "player_id"],
+                    ascending=[False, True],
+                    kind="mergesort",
+                ).drop_duplicates("player_id", keep="first")
+                candidates["model_rank"] = candidates["shrunk_per_100"].rank(
+                    method="min", ascending=False
+                ).astype(int)
+                candidates["model_weight"] = float(weight)
+                candidates["rrf_contribution"] = (
+                    float(weight) / (float(rrf_k) + candidates["model_rank"])
+                )
+                method_frames.append(candidates[[
+                    "player_id", "player_name", "scoring_method", "model_rank",
+                    "model_weight", "rrf_contribution", "pressure_deliveries",
+                    "pressure_matches", "last_pressure_match_date",
+                    "days_since_last_pressure_match",
+                ]].copy())
+
+            if not method_frames:
+                continue
+            long = pd.concat(method_frames, ignore_index=True)
+            summary = long.groupby("player_id", as_index=False).agg(
+                player_name=("player_name", "first"),
+                rrf_score=("rrf_contribution", "sum"),
+                model_support=("scoring_method", "nunique"),
+                model_weight_coverage=("model_weight", "sum"),
+                min_pressure_deliveries_supported=("pressure_deliveries", "min"),
+                max_pressure_deliveries_supported=("pressure_deliveries", "max"),
+                min_pressure_matches_supported=("pressure_matches", "min"),
+                max_pressure_matches_supported=("pressure_matches", "max"),
+                last_pressure_match_date=("last_pressure_match_date", "max"),
+                days_since_last_pressure_match=("days_since_last_pressure_match", "min"),
+            )
+
+            for method, _weight in weights.items():
+                slug = method.lower().replace(" ", "_").replace("-", "_")
+                method_rows = long.loc[long["scoring_method"].eq(method)].drop_duplicates("player_id").set_index("player_id")
+                if not method_rows.empty:
+                    summary = summary.join(
+                        method_rows[["model_rank", "rrf_contribution"]].rename(columns={
+                            "model_rank": f"rank_{slug}",
+                            "rrf_contribution": f"contribution_{slug}",
+                        }),
+                        on="player_id",
+                    )
+                else:
+                    summary[f"rank_{slug}"] = np.nan
+                    summary[f"contribution_{slug}"] = 0.0
+
+            summary = summary.loc[summary["model_support"].ge(min_model_support)].copy()
+            if summary.empty:
+                continue
+            summary["role"] = role
+            summary["half_life"] = half
+            summary["min_deliveries"] = int(min_deliveries)
+            summary["min_matches"] = int(min_matches)
+            summary["max_days_since_last_match"] = (
+                int(max_days_since_last_match)
+                if max_days_since_last_match is not None else np.nan
+            )
+            summary["min_model_support"] = int(min_model_support)
+            summary["rrf_k"] = int(rrf_k)
+            summary["model_weights"] = "; ".join(
+                f"{name}={weight:.0%}" for name, weight in weights.items()
+            )
+            ref_dates = (
+                role_data["recency_reference_date"].dropna().astype(str).unique()
+                if "recency_reference_date" in role_data else []
+            )
+            summary["recency_reference_date"] = ref_dates[0] if len(ref_dates) else None
+            summary = summary.sort_values(
+                ["rrf_score", "model_support", "model_weight_coverage", "player_id"],
+                ascending=[False, False, False, True],
+                kind="mergesort",
+            ).reset_index(drop=True)
+            summary["ensemble_rank"] = np.arange(1, len(summary) + 1)
+            output_frames.append(summary)
+
+    if not output_frames:
+        return pd.DataFrame()
+    return pd.concat(output_frames, ignore_index=True, sort=False).sort_values(
+        ["role", "half_life", "ensemble_rank"]
+    ).reset_index(drop=True)
+
+
+def compare_top_rrf_ensemble(ensemble: pd.DataFrame, top_n: int = 20) -> pd.DataFrame:
+    """Return the first N eligible players from each role/half-life ensemble."""
+    if ensemble.empty:
+        return pd.DataFrame()
+    if top_n < 1:
+        raise ValueError("top_n must be at least 1")
+    return ensemble.loc[ensemble["ensemble_rank"].le(top_n)].copy()
