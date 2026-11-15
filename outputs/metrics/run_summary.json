@@ -1,0 +1,15 @@
+{
+  "selected_matches": 837,
+  "selected_deliveries_innings_1_2": 193988,
+  "chase_pressure_deliveries": 91419,
+  "chase_matches": 815,
+  "unresolved_bye_legbye_deliveries": 3166,
+  "synthetic_xgb_accuracy": 0.9339772727272727,
+  "synthetic_xgb_macro_f1": 0.8580032930730447,
+  "synthetic_pi_accuracy": 0.8560227272727273,
+  "synthetic_pi_macro_f1": 0.7711309610576629,
+  "real_pi_xgb_spearman": 0.9922544352625755,
+  "real_pi_xgb_pearson": 0.9353997045233946,
+  "mean_pi": 41.951448030948534,
+  "mean_xgb_synthetic_score": 36.99060734739534
+}
