@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT))
 
 from cricket_pressure.pressure import DEFAULT_WEIGHTS
 from cricket_pressure.synthetic import FEATURE_COLUMNS, CLASS_NAMES, CLASS_MIDPOINTS
+from cricket_pressure.final_selection import build_final_selection_candidates, build_consensus_rankings
 
 st.set_page_config(page_title="SupeRR Pressure Lab", page_icon="🏏", layout="wide")
 st.markdown("""
@@ -77,6 +78,12 @@ def load_json(path: str):
     p = Path(path)
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
 
+@st.cache_data(show_spinner="Comparing pressure and lower-pressure player performance...")
+def load_final_selection(frame: pd.DataFrame, min_deliveries: int, min_matches: int):
+    return build_final_selection_candidates(
+        frame, min_deliveries=min_deliveries, min_matches=min_matches
+    )
+
 data = load_data()
 df = data["real"]
 model = load_synthetic_model()
@@ -135,7 +142,7 @@ with right:
 
 tabs = st.tabs([
     "Synthetic diagnostics", "Scenario playground", "Weight lab",
-    "Match disagreement", "Player rankings", "Historical win model", "Score audit", "Recency analysis",
+    "Match disagreement", "Player rankings", "Historical win model", "Score audit", "Recency analysis", "Final Selection Lab",
 ])
 
 with tabs[0]:
@@ -492,6 +499,231 @@ with tabs[6]:
         if not innings_audit.empty:
             with st.expander("Innings-level legal-ball and wicket checks"):
                 st.dataframe(innings_audit, use_container_width=True, hide_index=True)
+
+
+with tabs[8]:
+    st.subheader("Final Selection Lab")
+    st.caption(
+        "Ranks players by how much better they perform in high-pressure chase states than in their own "
+        "lower-pressure chase states. The comparison is matched within the player's format and season."
+    )
+
+    control_1, control_2, control_3 = st.columns(3)
+    with control_1:
+        final_min_deliveries = st.number_input(
+            "Minimum pressure and baseline deliveries", min_value=25, max_value=5000,
+            value=100, step=25, key="final_min_deliveries",
+        )
+    with control_2:
+        final_min_matches = st.number_input(
+            "Minimum pressure and baseline matches", min_value=3, max_value=1000,
+            value=10, step=1, key="final_min_matches",
+        )
+    with control_3:
+        final_half_life = st.selectbox(
+            "Recency setting for final selection",
+            ["unweighted", "365d", "540d", "730d"], index=2,
+            format_func=lambda x: {
+                "unweighted": "No decay", "365d": "365-day half-life",
+                "540d": "540-day half-life", "730d": "730-day half-life",
+            }[x],
+            key="final_half_life",
+        )
+
+    with st.expander("How the final selection is calculated", expanded=False):
+        st.markdown(
+            """
+            1. **Pressure sample:** deliveries with the selected score at or above 60.
+            2. **Player baseline:** that same player's deliveries below 60, matched within the same
+               competition format and season. This is a lower-pressure *chase* baseline, not an
+               all-innings career average.
+            3. **Batter metric:** batter runs per 100 balls faced; wides are excluded from balls faced.
+               Dismissals per 100 balls are shown as a secondary guardrail.
+            4. **Bowler metric:** credited wickets per 100 legal balls. Economy rate is omitted because
+               unresolved bye/legbye values make conceded-run comparisons provisional.
+            5. **Stabilization:** pressure and baseline rates are separately shrunk toward their
+               role-wide rates using a 100-ball prior. Both sides must pass the delivery and match
+               sample gates.
+            6. **Consensus:** final rank is the median percentile across the four PI definitions
+               (baseline, RRR-heavy, momentum-heavy and stakes-heavy). A player must qualify under at
+               least three of those four definitions.
+            7. **XGBoost:** displayed only as a sensitivity comparison. It learns synthetic labels and
+               is not included in the consensus or treated as independent pressure ground truth.
+
+            Recency weights are exponential half-lives anchored to the newest valid match date in the
+            dataset. The selected half-life changes performance weighting, not the raw sample gates.
+            """
+        )
+
+    selection = load_final_selection(view, int(final_min_deliveries), int(final_min_matches))
+    if selection.empty:
+        st.warning(
+            "No comparable pressure/baseline samples are available under the current format and season filters. "
+            "Check the processed data and try a wider filter scope."
+        )
+    else:
+        consensus = build_consensus_rankings(selection, min_methods=3)
+        if consensus.empty:
+            st.warning(
+                "No players currently qualify under at least three PI definitions and both pressure/baseline "
+                "sample gates. Do not lower the thresholds just to force a Top 10."
+            )
+        else:
+            selected_consensus = consensus.loc[consensus["half_life"].eq(final_half_life)].copy()
+            batter_consensus = selected_consensus.loc[selected_consensus["role"].eq("Batter")]
+            bowler_consensus = selected_consensus.loc[selected_consensus["role"].eq("Bowler")]
+            metric_1, metric_2, metric_3, metric_4 = st.columns(4)
+            metric_1.metric("Eligible batter candidates", f"{len(batter_consensus):,}")
+            metric_2.metric("Eligible bowler candidates", f"{len(bowler_consensus):,}")
+            metric_3.metric("Batter Top 10", f"{min(10, len(batter_consensus))}/10")
+            metric_4.metric("Bowler Top 10", f"{min(10, len(bowler_consensus))}/10")
+
+            def _selection_columns(role_name: str):
+                role_rows = selected_consensus.loc[selected_consensus["role"].eq(role_name)].copy()
+                role_rows = role_rows.sort_values("consensus_rank")
+                top20 = role_rows.head(20)
+                top10 = role_rows.head(10)
+                st.markdown(f"#### Final ordered Top 10 — {role_name}s")
+                if top10.empty:
+                    st.info(f"No eligible {role_name.lower()} candidates under the current sample gates.")
+                else:
+                    if role_name == "Batter":
+                        extra_cols = ["baseline_pi_pressure_dismissals_per_100",
+                                      "baseline_pi_normal_dismissals_per_100",
+                                      "baseline_pi_dismissal_rate_delta_per_100"]
+                    else:
+                        extra_cols = []
+                    final_cols = [
+                        "consensus_rank", "player_name", "baseline_pi_uplift_pct",
+                        "baseline_pi_pressure_rate", "baseline_pi_normal_rate",
+                        "baseline_pi_pressure_deliveries", "baseline_pi_pressure_matches",
+                        "methods_supported", *extra_cols, "explanation",
+                    ]
+                    st.dataframe(
+                        top10[final_cols].rename(columns={
+                            "consensus_rank": "Rank",
+                            "player_name": "Player",
+                            "baseline_pi_uplift_pct": "PI baseline uplift (%)",
+                            "baseline_pi_pressure_rate": "Pressure rate / 100",
+                            "baseline_pi_normal_rate": "Lower-pressure rate / 100",
+                            "baseline_pi_pressure_deliveries": "Pressure deliveries",
+                            "baseline_pi_pressure_matches": "Pressure matches",
+                            "methods_supported": "PI methods supporting",
+                            "baseline_pi_pressure_dismissals_per_100": "Pressure dismissals / 100 balls",
+                            "baseline_pi_normal_dismissals_per_100": "Baseline dismissals / 100 balls",
+                            "baseline_pi_dismissal_rate_delta_per_100": "Dismissal-rate change / 100",
+                        }),
+                        use_container_width=True, hide_index=True,
+                    )
+                st.markdown(f"#### Top 20 {role_name.lower()} candidates")
+                if top20.empty:
+                    st.info("No candidates available.")
+                else:
+                    st.dataframe(
+                        top20[[
+                            "consensus_rank", "player_name", "consensus_percentile",
+                            "baseline_pi_uplift_pct", "baseline_pi_pressure_rate",
+                            "baseline_pi_normal_rate", "baseline_pi_pressure_deliveries",
+                            "baseline_pi_pressure_matches", "baseline_pi_normal_deliveries",
+                            "baseline_pi_normal_matches", "methods_supported",
+                        ]].rename(columns={
+                            "consensus_rank": "Consensus rank",
+                            "player_name": "Player",
+                            "consensus_percentile": "Median PI percentile",
+                            "baseline_pi_uplift_pct": "PI baseline uplift (%)",
+                            "baseline_pi_pressure_rate": "Pressure rate / 100",
+                            "baseline_pi_normal_rate": "Lower-pressure rate / 100",
+                            "baseline_pi_pressure_deliveries": "Pressure deliveries",
+                            "baseline_pi_pressure_matches": "Pressure matches",
+                            "baseline_pi_normal_deliveries": "Baseline deliveries",
+                            "baseline_pi_normal_matches": "Baseline matches",
+                            "methods_supported": "PI methods supporting",
+                        }),
+                        use_container_width=True, hide_index=True,
+                    )
+
+                # Pairwise Top-10 overlap across all scoring methods, including synthetic XGBoost.
+                method_names = [
+                    name for name in ["PI baseline", "PI RRR-heavy", "PI momentum-heavy",
+                                      "PI stakes-heavy", "XGBoost"]
+                    if name in set(selection["scoring_method"])
+                ]
+                top_sets = {}
+                for method_name in method_names:
+                    method_rows = selection.loc[
+                        selection["role"].eq(role_name)
+                        & selection["half_life"].eq(final_half_life)
+                        & selection["scoring_method"].eq(method_name)
+                        & selection["eligible"]
+                    ].sort_values("uplift_pct", ascending=False)
+                    top_sets[method_name] = set(method_rows.head(10)["player_id"])
+                if method_names:
+                    overlap = pd.DataFrame(
+                        [[len(top_sets[a] & top_sets[b]) for b in method_names]
+                         for a in method_names],
+                        index=method_names, columns=method_names,
+                    )
+                    fig = px.imshow(
+                        overlap, text_auto=True, aspect="auto", zmin=0, zmax=10,
+                        color_continuous_scale="Blues",
+                        title=f"Top-10 overlap across scoring methods — {role_name.lower()}s",
+                        labels={"x": "Scoring method", "y": "Scoring method", "color": "Shared players"},
+                    )
+                    fig.update_layout(height=360, margin=dict(l=10, r=10, t=55, b=10))
+                    st.plotly_chart(fig, use_container_width=True)
+
+            _selection_columns("Batter")
+            _selection_columns("Bowler")
+
+            st.markdown("#### Rank movement across half-lives")
+            stability = consensus.pivot_table(
+                index=["role", "player_id", "player_name"],
+                columns="half_life", values="consensus_rank", aggfunc="min",
+            ).reset_index()
+            display_halves = [h for h in ["unweighted", "365d", "540d", "730d"] if h in stability.columns]
+            stability = stability.sort_values(
+                by=final_half_life if final_half_life in stability.columns else display_halves[0],
+                na_position="last",
+            )
+            st.caption(
+                "Lower ranks are better. A blank means the player did not qualify under at least three PI variants "
+                "for that half-life. The ranking uses the same player sample gates at every setting."
+            )
+            st.dataframe(
+                stability[["role", "player_name", *display_halves]].head(60),
+                use_container_width=True, hide_index=True,
+            )
+
+            st.markdown("#### Top-10 overlap across recency settings")
+            stability_overlap_rows = []
+            for role_name in ["Batter", "Bowler"]:
+                sets = {}
+                for half in ["unweighted", "365d", "540d", "730d"]:
+                    sets[half] = set(
+                        consensus.loc[
+                            consensus["role"].eq(role_name)
+                            & consensus["half_life"].eq(half)
+                            & consensus["consensus_rank"].le(10),
+                            "player_id",
+                        ]
+                    )
+                anchor = sets.get(final_half_life, set())
+                for half, ids in sets.items():
+                    stability_overlap_rows.append({
+                        "role": role_name,
+                        "half_life": half,
+                        f"top10_overlap_vs_{final_half_life}": len(anchor & ids),
+                        "top10_count": len(ids),
+                    })
+            st.dataframe(
+                pd.DataFrame(stability_overlap_rows),
+                use_container_width=True, hide_index=True,
+            )
+            st.warning(
+                "Interpret rankings as evidence of relative performance uplift, not proof of psychological clutch skill. "
+                "The lower-pressure comparison includes only chase deliveries below the selected pressure threshold. "
+                "Bowler economy is withheld until bye/legbye score reconstruction is resolved."
+            )
 
 st.divider()
 st.markdown(
