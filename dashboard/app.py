@@ -1089,7 +1089,8 @@ with tabs[11]:
     with rr_plan_tab:
         st.caption(
             "The XI is the most frequently listed RR playing XI in IPL 2026. Individual pressure records use RR chase deliveries "
-            "from IPL 2022–2026; replacements are drawn from the wider IPL player pool."
+            "from IPL 2022–2026; replacements are drawn from the wider IPL player pool. "
+            "The final-over lens is the last six balls of a chase (balls_remaining ≤ 6), separate from the broader Death phase."
         )
         xi_review = data["rr_xi_review"]
         replacement_shortlist = data["rr_replacements"]
@@ -1138,7 +1139,7 @@ with tabs[11]:
                 "rr_last_over_uplift", "rr_last_over_dismissal_delta",
                 "rr_last_over_economy", "rr_last_over_baseline_economy",
                 "rr_last_over_wickets_per_100", "rr_last_over_dot_rate",
-                "rr_last_over_sample_adequate", "weakness_reason",
+                "rr_last_over_sample_adequate", "last_over_weakness_score", "weakness_reason",
             ] if c in filtered_review.columns]
             st.dataframe(filtered_review[review_cols].rename(columns={
                 "historical_xi_rank": "2026 XI rank", "player_name": "Player", "pi_type": "Selected PI",
@@ -1159,6 +1160,7 @@ with tabs[11]:
                 "rr_last_over_wickets_per_100": "Last-over wickets / 100",
                 "rr_last_over_dot_rate": "Last-over dot rate",
                 "rr_last_over_sample_adequate": "Last-over sample adequate",
+                "last_over_weakness_score": "Last-over weakness score",
                 "weakness_reason": "Evidence",
             }), use_container_width=True, hide_index=True)
 
