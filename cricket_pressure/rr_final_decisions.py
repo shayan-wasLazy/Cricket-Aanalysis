@@ -196,6 +196,9 @@ def _last_over_comparison(
         high[f"{prefix}_dismissal_delta"] = (
             high.get(f"{prefix}_dismissals_per_100") - high.get(f"{prefix}_baseline_dismissals_per_100")
         )
+        high[f"{prefix}_boundary_delta"] = (
+            high.get(f"{prefix}_boundary_rate") - high.get(f"{prefix}_baseline_boundary_rate")
+        )
     else:
         # Positive means the bowler conceded fewer runs per over in pressure.
         high[f"{prefix}_uplift"] = (
@@ -453,21 +456,36 @@ def build_rr_weakness_replacements(
 
     # A last-over signal only becomes a weakness flag after its own minimum sample gate.
     last_over_uplift = review.get("rr_last_over_uplift", pd.Series(np.nan, index=review.index))
-    batter_last_drop = review["role"].eq("Batter") & last_over_uplift.lt(-15)
-    bowler_last_drop = review["role"].eq("Bowler") & last_over_uplift.lt(-2.0)
+    last_over_boundary_delta = review.get(
+        "rr_last_over_boundary_delta", pd.Series(np.nan, index=review.index)
+    )
+    last_over_dismissal_delta = review.get(
+        "rr_last_over_dismissal_delta", pd.Series(np.nan, index=review.index)
+    )
+    last_over_wicket_delta = review.get(
+        "rr_last_over_wicket_delta", pd.Series(np.nan, index=review.index)
+    )
+    last_over_dot_delta = review.get(
+        "rr_last_over_dot_delta", pd.Series(np.nan, index=review.index)
+    )
+    batter_last_score = 100 * (
+        .50 * ((-last_over_uplift).clip(lower=0) / 15).clip(0, 1)
+        + .25 * ((-last_over_boundary_delta).clip(lower=0) / 5).clip(0, 1)
+        + .25 * (last_over_dismissal_delta.clip(lower=0) / 1.5).clip(0, 1)
+    )
+    bowler_last_score = 100 * (
+        .45 * ((-last_over_uplift).clip(lower=0) / 2).clip(0, 1)
+        + .35 * ((-last_over_wicket_delta).clip(lower=0) / 2).clip(0, 1)
+        + .20 * ((-last_over_dot_delta).clip(lower=0) / 5).clip(0, 1)
+    )
+    review["last_over_weakness_score"] = np.where(
+        review["role"].eq("Batter"), batter_last_score, bowler_last_score
+    ).clip(0, 100)
     last_over_sample_ok = review.get(
         "rr_last_over_sample_adequate", pd.Series(False, index=review.index)
     ).fillna(False)
-    last_over_drop = last_over_sample_ok & (batter_last_drop | bowler_last_drop)
-    review["last_over_weakness_score"] = np.select(
-        [review["role"].eq("Batter"), review["role"].eq("Bowler")],
-        [
-            ((-last_over_uplift).clip(lower=0) / 15).clip(0, 1) * 100,
-            ((-last_over_uplift).clip(lower=0) / 2).clip(0, 1) * 100,
-        ],
-        default=0.0,
-    )
     review.loc[~last_over_sample_ok, "last_over_weakness_score"] = 0.0
+    last_over_drop = last_over_sample_ok & review["last_over_weakness_score"].ge(50)
     review["underperformance_component"] = np.maximum(
         review["underperformance_component"], review["last_over_weakness_score"]
     )
