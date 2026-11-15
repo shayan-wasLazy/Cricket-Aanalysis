@@ -256,26 +256,19 @@ Generated files:
 
 **Chronological model leakage guard:** the historical win-probability model excludes the season-wide target percentile and season-baseline-filled recent run-rate/momentum features, because those were computed using all matches in a season and could indirectly expose future match information to earlier training rows. The outcome model uses only pre-delivery state variables plus match metadata available before play.
 
-## Final Selection Lab — pressure uplift versus player baseline
+## Final Selection Lab — pressure consistency
 
-The dashboard's **Final Selection Lab** adds a separate candidate-selection workflow. It does not reuse the earlier absolute high-pressure efficiency ranks as the final answer.
+The **Final Selection Lab** ranks repeatable high-pressure performance. It does not rank players by uplift over their own baseline.
 
-### Comparison definition
+### Performance measures
 
-For each player and each pressure-scoring method:
+- **Batters:** runs per 100 balls faced in high-pressure chase deliveries. Wides are excluded from balls faced. Dismissals per 100 balls faced are displayed as a secondary indicator.
+- **Bowlers:** dot-ball percentage on known legal deliveries. Rows with unresolved bye/legbye run values are excluded from the dot-ball denominator. Credited wickets per 100 legal balls are displayed separately because wicket counts are sparse and volatile; economy is not reported until score reconstruction is resolved.
+- **Match consistency:** player performance is first aggregated within each high-pressure match. The system then calculates a recency- and exposure-weighted mean and standard deviation across matches.
+- **Reliability adjustment:** the mean is shrunk toward the role-wide high-pressure rate using a five-effective-match prior. The consistency score subtracts a configurable number of standard errors from that shrunk mean. This rewards players with strong performance that repeats across matches and penalizes volatility or low effective samples.
+- **Eligibility:** the default minimum is 100 measured pressure deliveries across at least 10 matches. The gates apply to the measured denominator (balls faced for batters; known legal deliveries for bowlers).
+- **Consensus:** the final order is the median percentile across four PI definitions: baseline, RRR-heavy, momentum-heavy and stakes-heavy. A candidate must qualify under at least three. Synthetic-trained XGBoost is displayed as a diagnostic but excluded from consensus.
 
-- Pressure deliveries have a score of **60 or above**.
-- The player's comparison sample is their own chase deliveries below 60, matched within the same match format and season as their pressure sample. This is a lower-pressure chase baseline, not an all-innings career average.
-- Batters are compared on runs per 100 balls faced (wides excluded from balls faced). Dismissals per 100 balls are displayed as a guardrail.
-- Bowlers are compared on credited wickets per 100 legal balls. Economy rate is intentionally omitted while bye/legbye runs remain unresolved in the source data.
-- Both pressure and baseline samples must meet the selected minimum delivery and match gates. Default gates are 100 deliveries and 10 matches on each side.
-- Pressure and baseline rates are separately stabilized toward their respective role-wide rates with a 100-ball prior. Recency settings use the same deterministic latest-match reference date as the earlier player analysis.
+The dashboard supports no decay, 365-day, 540-day and 730-day half-lives, player-name search, method-level Top-10 and Top-20 overlap matrices, consensus rank movement, and Top-10 / Top-20 overlap across recency settings. The main sidebar's format and season filters define the player pool.
 
-### Final consensus and sensitivity
-
-The final ordered Top 10 is based on the **median player percentile across four PI definitions**: baseline, RRR-heavy, momentum-heavy and stakes-heavy. A candidate must qualify under at least three of the four definitions. The dashboard also shows each role's Top 20 candidate pool, pressure-vs-baseline uplift, sample sizes, pairwise Top-10 overlap across scoring methods and consensus-rank movement across no decay / 365d / 540d / 730d settings.
-
-Synthetic-trained XGBoost appears only in the sensitivity comparison. It is excluded from consensus because its training labels are synthetic; its rank is not independent evidence of real-world pressure skill.
-
-**Interpretation guardrail:** uplift means observed performance in higher-scoring chase states relative to the player's own lower-scoring chase states in matched format-season strata. It is not proof of psychological clutch ability. These rankings remain descriptive until score reconstruction and the pressure definition receive stronger independent validation.
-
+**Interpretation guardrail:** these are descriptive pressure-performance consistency rankings, not proof of psychological clutch ability. The bowling primary metric is dot-ball percentage rather than economy because unresolved bye/legbye values remain in the source data.
