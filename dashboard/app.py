@@ -1009,6 +1009,18 @@ with tabs[11]:
             if final_ensemble.empty:
                 st.error("No candidates meet the current sample and model-support gates. Lower the thresholds or change the recency horizon.")
             else:
+                rate_cols = [c for c in final_ensemble.columns if c.startswith("shrunk_per_100_")]
+                economy_cols = [c for c in final_ensemble.columns if c.startswith("economy_per_over_")]
+                dot_cols = [c for c in final_ensemble.columns if c.startswith("dot_rate_")]
+                final_ensemble["mean_pressure_rate_per_100"] = (
+                    final_ensemble[rate_cols].mean(axis=1) if rate_cols else np.nan
+                )
+                final_ensemble["mean_pressure_economy_per_over"] = (
+                    final_ensemble[economy_cols].mean(axis=1) if economy_cols else np.nan
+                )
+                final_ensemble["mean_pressure_dot_rate"] = (
+                    final_ensemble[dot_cols].mean(axis=1) if dot_cols else np.nan
+                )
                 batters_final = final_ensemble.loc[
                     final_ensemble["role"].eq("Batter") & final_ensemble["ensemble_rank"].le(10)
                 ].sort_values("ensemble_rank").copy()
@@ -1026,7 +1038,8 @@ with tabs[11]:
                 st.markdown("**Final top 10 batters**")
                 bat_cols = [
                     "ensemble_rank", "player_name", "rrf_score", "mean_selection_score",
-                    "mean_pressure_uplift_per_100", "model_support", "min_pressure_deliveries_supported",
+                    "mean_pressure_uplift_per_100", "mean_pressure_rate_per_100",
+                    "model_support", "min_pressure_deliveries_supported",
                     "min_pressure_matches_supported", "rank_pi_baseline", "rank_pi_rrr_heavy",
                     "rank_pi_momentum_heavy", "rank_pi_stakes_heavy", "rank_xgboost",
                 ]
@@ -1034,22 +1047,31 @@ with tabs[11]:
                 st.dataframe(batters_final[bat_cols].rename(columns={
                     "ensemble_rank": "Rank", "player_name": "Player", "rrf_score": "RRF score",
                     "mean_selection_score": "Model score", "mean_pressure_uplift_per_100": "Pressure uplift / 100 balls",
+                    "mean_pressure_rate_per_100": "Pressure runs / 100 balls (shrunk)",
                     "model_support": "Models supporting", "min_pressure_deliveries_supported": "Min pressure balls",
                     "min_pressure_matches_supported": "Min pressure matches",
                 }), use_container_width=True, hide_index=True)
 
                 st.markdown("**Final top 10 bowlers**")
                 bowl_cols = [c for c in bat_cols if c in bowlers_final.columns]
+                bowl_cols += [
+                    c for c in ["mean_pressure_economy_per_over", "mean_pressure_dot_rate"]
+                    if c in bowlers_final.columns and c not in bowl_cols
+                ]
                 st.dataframe(bowlers_final[bowl_cols].rename(columns={
                     "ensemble_rank": "Rank", "player_name": "Player", "rrf_score": "RRF score",
                     "mean_selection_score": "Model score", "mean_pressure_uplift_per_100": "Wicket-rate uplift / 100 balls",
+                    "mean_pressure_rate_per_100": "Pressure wickets / 100 legal balls (shrunk)",
+                    "mean_pressure_economy_per_over": "Pressure economy / over",
+                    "mean_pressure_dot_rate": "Pressure dot-ball rate",
                     "model_support": "Models supporting", "min_pressure_deliveries_supported": "Min pressure balls",
                     "min_pressure_matches_supported": "Min pressure matches",
                 }), use_container_width=True, hide_index=True)
 
                 export_cols = [c for c in [
                     "role", "ensemble_rank", "player_id", "player_name", "rrf_score",
-                    "mean_selection_score", "mean_pressure_uplift_per_100", "model_support",
+                    "mean_selection_score", "mean_pressure_uplift_per_100", "mean_pressure_rate_per_100",
+                    "mean_pressure_economy_per_over", "mean_pressure_dot_rate", "model_support",
                     "model_weight_coverage", "min_pressure_deliveries_supported",
                     "max_pressure_deliveries_supported", "min_pressure_matches_supported",
                     "max_pressure_matches_supported", "days_since_last_pressure_match",
