@@ -75,3 +75,41 @@ def test_chronological_split_keeps_matches_disjoint():
     assert len(test_ids) == 6
     assert frame.loc[frame["match_id"].isin(train_ids), "match_date"].max() < cutoff
     assert frame.loc[frame["match_id"].isin(test_ids), "match_date"].min() >= cutoff
+
+
+from cricket_pressure.player_rankings import exponential_recency_weights
+
+
+def test_exponential_recency_weight_has_expected_half_life():
+    dates = pd.Series(pd.to_datetime([
+        "2025-01-01", "2026-01-01", "2027-01-01"
+    ], utc=True))
+    weights, reference = exponential_recency_weights(dates, half_life_days=365)
+    assert np.isclose(weights.iloc[-1], 1.0)
+    assert np.isclose(weights.iloc[-2], 0.5, atol=0.002)
+    assert np.isclose(weights.iloc[0], 0.25, atol=0.003)
+    assert str(reference.date()) == "2027-01-01"
+
+
+def test_player_rankings_include_all_recency_settings():
+    from cricket_pressure.player_rankings import build_player_rankings
+
+    rows = pd.DataFrame({
+        "match_id": [1, 2, 3, 4],
+        "match_date": pd.to_datetime(["2025-01-01","2025-06-01","2026-01-01","2026-06-01"], utc=True),
+        "striker_id": [10,10,20,20], "striker_name": ["A","A","B","B"],
+        "bowler_id": [30,30,40,40], "bowler_name": ["C","C","D","D"],
+        "runs": [2,2,6,6], "is_wicket": [False,False,True,True],
+        "dismissed_player_id": [np.nan,np.nan,20,20],
+        "dismissal_type": ["","","caught","caught"],
+        "pressure_index": [75,75,75,75],
+        "xgb_pressure_score": [75,75,75,75],
+    })
+    ranks = build_player_rankings(
+        rows, min_deliveries=1, min_matches=1, prior_deliveries=1
+    )
+    assert set(ranks["half_life"].unique()) == {"unweighted","365d","540d","730d"}
+    batter = ranks.loc[
+        ranks["role"].eq("Batter") & ranks["scoring_method"].eq("PI baseline")
+    ]
+    assert batter["weighted_per_100"].notna().all()
