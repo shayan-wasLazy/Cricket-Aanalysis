@@ -323,6 +323,21 @@ def _rr_player_phase_record(rr_rows: pd.DataFrame, role: str, phase: str, rr_tea
             c for c in last_over.columns if c not in {"player_key", "player_name"}
         ]
         result = result.merge(last_over[last_cols], on=["player_key", "player_name"], how="left")
+    else:
+        result["rr_last_over_sample_adequate"] = False
+        for col in (
+            "rr_last_over_deliveries", "rr_last_over_matches",
+            "rr_last_over_strike_rate", "rr_last_over_baseline_strike_rate",
+            "rr_last_over_boundary_rate", "rr_last_over_baseline_boundary_rate",
+            "rr_last_over_dismissals_per_100", "rr_last_over_baseline_dismissals_per_100",
+            "rr_last_over_economy", "rr_last_over_baseline_economy",
+            "rr_last_over_wickets_per_100", "rr_last_over_baseline_wickets_per_100",
+            "rr_last_over_dot_rate", "rr_last_over_baseline_dot_rate",
+            "rr_last_over_uplift", "rr_last_over_boundary_delta",
+            "rr_last_over_dismissal_delta", "rr_last_over_wicket_delta",
+            "rr_last_over_dot_delta",
+        ):
+            result[col] = np.nan
     expected = (
         ["rr_pi_pressure_deliveries", "rr_pi_pressure_matches", "rr_pi_pressure_strike_rate",
          "rr_pi_pressure_boundary_rate", "rr_pi_pressure_dismissals_per_100",
