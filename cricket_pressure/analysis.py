@@ -14,7 +14,10 @@ from .synthetic import (
     CLASS_NAMES, FEATURE_COLUMNS, generate_synthetic_scenarios,
     train_synthetic_xgb, score_with_xgb,
 )
-from .player_rankings import build_player_rankings, compare_top10_rankings
+from .player_rankings import (
+    build_player_rankings, compare_top10_rankings,
+    build_weighted_rrf_ensemble, compare_top_rrf_ensemble,
+)
 from .outcome import train_historical_win_probability
 import re
 
@@ -395,6 +398,8 @@ def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int =
     player_comparison = _player_summary(real)  # full-sample exposure reference; descriptive only
     player_rankings = build_player_rankings(real)
     player_top10 = compare_top10_rankings(player_rankings, top_n=10)
+    player_rrf = build_weighted_rrf_ensemble(player_rankings, half_life=None)
+    player_rrf_top20 = compare_top_rrf_ensemble(player_rrf, top_n=20)
     match_disagreements, delivery_disagreements = _build_match_disagreements(real)
     innings_validation, score_audit = _build_score_audit(states)
 
@@ -462,6 +467,8 @@ def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int =
     extras["importance"].to_csv(dirs["outputs"] / "xgb_feature_importance.csv", index=False)
     player_rankings.to_csv(dirs["outputs"] / "player_rankings.csv", index=False)
     player_top10.to_csv(dirs["outputs"] / "player_top10_comparison.csv", index=False)
+    player_rrf.to_csv(dirs["outputs"] / "player_rrf_ensemble.csv", index=False)
+    player_rrf_top20.to_csv(dirs["outputs"] / "player_rrf_top20.csv", index=False)
     match_disagreements.to_csv(dirs["outputs"] / "match_disagreement_summary.csv", index=False)
     delivery_disagreements.to_csv(dirs["outputs"] / "delivery_disagreements.csv", index=False)
     innings_validation.to_csv(dirs["outputs"] / "innings_validation.csv", index=False)
