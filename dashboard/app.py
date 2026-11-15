@@ -432,7 +432,7 @@ with tabs[7]:
 
 with tabs[5]:
     st.subheader("Historical win-probability model")
-    st.caption("This model is separate from the synthetic pressure classifier. It predicts whether the second-innings batting team eventually won, using pre-delivery state and a chronological match holdout.")
+    st.caption("This model is separate from the synthetic pressure classifier. It predicts whether the second-innings batting team eventually won, using pre-delivery state and a chronological match holdout. The displayed model uses a provisional 540-day training half-life; compare it with no decay, 365 days and 730 days in the Recency analysis tab.")
     if not outcome_metrics:
         st.info("Historical outcome model outputs not found. Run the latest python run_analysis.py.")
     else:
