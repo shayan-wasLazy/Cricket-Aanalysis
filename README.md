@@ -430,8 +430,20 @@ Phase-specific PI settings are selected by the cricket task:
 The phase player score remains 80% PI / 20% synthetic-trained XGBoost. The bowler
 uses the inverse of the batting-side pressure state. RR replacement candidates
 normally need at least 20 PI-pressure deliveries across 3 matches; candidates that
-only pass a relaxed phase-exposure gate are explicitly labelled. Auction/retention
-availability, overseas slots, budget, and final squad balance are not inferred.
+only pass a relaxed phase-exposure gate are explicitly labelled.
+
+**Final-over lens:** separately from the broader Death phase, the selector measures
+the last six balls of an active chase (balls_remaining <= 6). RR XI batters are
+compared on last-over strike rate and dismissal/boundary rates against their own
+lower-pressure last-over baseline; bowlers are compared on economy, credited
+wickets and dot rate. A final-over weakness is allowed to affect the XI finding
+only with at least 8 pressure balls across 2 matches. Death-phase replacement
+candidates can receive an additional 15% last-over fit component when they clear
+the same sample gate; otherwise the selector falls back to the normal Death-phase
+score. This avoids elevating a candidate on a one- or two-ball anecdote.
+
+Auction/retention availability, overseas slots, budget, and final squad balance
+are not inferred.
 
 ### Rebuild the new outputs
 
