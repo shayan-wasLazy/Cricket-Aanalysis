@@ -101,8 +101,13 @@ def _summarise_role(
         d["bowler_runs_conceded"] = (
             pd.to_numeric(d["runs"], errors="coerce").fillna(0) + charged_extra
         )
+        # A bye/leg-bye is not charged to the bowler, but it is still not a dot ball.
+        delivery_runs = pd.to_numeric(
+            d.get("provisional_total_runs", d["bowler_runs_conceded"]),
+            errors="coerce",
+        ).fillna(0)
         d["bowler_dot"] = (
-            d["bowler_runs_conceded"].eq(0) & d["is_legal_delivery"]
+            delivery_runs.eq(0) & d["is_legal_delivery"]
         ).astype(int)
         d["delivery_unit"] = d["is_legal_delivery"].astype(float)
         d["opportunity_match_id"] = d["match_id"].where(d["is_legal_delivery"])
