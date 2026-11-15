@@ -277,14 +277,16 @@ def _pressure_metrics(rows: pd.DataFrame, role: str) -> pd.DataFrame:
             + .15 * _pct(result["pressure_dismissals_per_100"], False)
         )
         return result
-    d = d.loc[d["is_legal_ball"]].copy()
     if d.empty:
         return pd.DataFrame()
     d["player_key"] = _key(d, "bowler_id", "bowler")
+    d["is_legal_metric_ball"] = d["is_legal_ball"].fillna(False).astype(bool)
+    # Runs on wides/no-balls count against the bowler even though they do not
+    # increase the legal-ball denominator. Dots are legal balls with zero runs.
     d["bowler_runs_conceded"] = d["runs_batter"] + d["wides"] + d["no_balls"]
-    d["dot"] = d["bowler_runs_conceded"].eq(0).astype(int)
+    d["dot"] = (d["bowler_runs_conceded"].eq(0) & d["is_legal_metric_ball"]).astype(int)
     result = d.groupby(["player_key", "bowler"], as_index=False).agg(
-        pressure_deliveries=("is_legal_ball", "sum"),
+        pressure_deliveries=("is_legal_metric_ball", "sum"),
         pressure_matches=("match_id", "nunique"),
         pressure_runs_conceded=("bowler_runs_conceded", "sum"),
         pressure_wickets=("bowler_credited_wicket", "sum"),
@@ -321,9 +323,12 @@ def build_phase_player_rankings(all_ipl: pd.DataFrame) -> pd.DataFrame:
                     ("XGBoost", "is_xgb_high_pressure", "xgb_pressure_score", "xgb"),
                 ]
             else:
-                base = all_ipl.loc[all_ipl["phase"].eq(phase) & all_ipl["is_legal_ball"]].copy()
+                # Keep illegal deliveries for bowler runs-conceded accounting;
+                # the pressure metric denominator is restricted to legal balls.
+                base = all_ipl.loc[all_ipl["phase"].eq(phase)].copy()
                 base["player_key"] = _key(base, "bowler_id", "bowler")
                 base["player_name"] = base["bowler"]
+                base["phase_delivery_unit"] = base["is_legal_ball"].fillna(False).astype(int)
                 specs = [
                     ("PI", "is_phase_bowling_pi_high_pressure", "phase_bowling_pi_score", "pi"),
                     ("XGBoost", "is_bowling_xgb_high_pressure", "bowling_xgb_pressure_score", "xgb"),
@@ -338,8 +343,10 @@ def build_phase_player_rankings(all_ipl: pd.DataFrame) -> pd.DataFrame:
                 base["batter"] = base["player_name"]
             else:
                 base["bowler"] = base["player_name"]
+            if role == "Batter":
+                base["phase_delivery_unit"] = 1
             overall = base.groupby(["player_key", "player_name"], as_index=False).agg(
-                phase_deliveries=("match_id", "size"),
+                phase_deliveries=("phase_delivery_unit", "sum"),
                 phase_matches=("match_id", "nunique"),
             )
             for _, flag_col, score_col, prefix in specs:
