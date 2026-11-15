@@ -182,6 +182,9 @@ def _last_over_comparison(
     if not base.empty:
         base = base[["player_key", "player_name"] + [c for c in rename_base.values() if c in base]]
         high = high.merge(base, on=["player_key", "player_name"], how="left")
+    for col in rename_base.values():
+        if col not in high:
+            high[col] = np.nan
     if role == "Batter":
         high[f"{prefix}_uplift"] = (
             high.get(f"{prefix}_strike_rate") - high.get(f"{prefix}_baseline_strike_rate")
@@ -451,25 +454,13 @@ def build_rr_weakness_replacements(
 
     adequate = _as_bool(review.get("rr_pressure_sample_adequate", pd.Series(False, index=review.index)))
     pressure_drop = review["rr_pressure_underperformance_score"].ge(50)
-    last_over_drop = (
-        review.get("rr_last_over_sample_adequate", pd.Series(False, index=review.index)).fillna(False)
-        & (
-            (review.get("rr_last_over_uplift", pd.Series(np.nan, index=review.index)).lt(-15))
-            if review.get("role", pd.Series("", index=review.index)).eq("Batter").all()
-            else pd.Series(False, index=review.index)
-        )
-    )
-    # Bowler last-over economy improvement is sign-reversed: a negative uplift means worse pressure economy.
-    if "role" in review:
-        batter_last_drop = review["role"].eq("Batter") & review.get(
-            "rr_last_over_uplift", pd.Series(np.nan, index=review.index)
-        ).lt(-15)
-        bowler_last_drop = review["role"].eq("Bowler") & review.get(
-            "rr_last_over_uplift", pd.Series(np.nan, index=review.index)
-        ).lt(-2.0)
-        last_over_drop = review.get(
-            "rr_last_over_sample_adequate", pd.Series(False, index=review.index)
-        ).fillna(False) & (batter_last_drop | bowler_last_drop)
+    # A last-over signal only becomes a weakness flag after the minimum sample gate.
+    last_over_uplift = review.get("rr_last_over_uplift", pd.Series(np.nan, index=review.index))
+    batter_last_drop = review["role"].eq("Batter") & last_over_uplift.lt(-15)
+    bowler_last_drop = review["role"].eq("Bowler") & last_over_uplift.lt(-2.0)
+    last_over_drop = review.get(
+        "rr_last_over_sample_adequate", pd.Series(False, index=review.index)
+    ).fillna(False) & (batter_last_drop | bowler_last_drop)
     model_low = review["decision_score"].lt(45)
     team_need = review["team_need_score"].ge(35)
     review["weakness_status"] = np.select(
@@ -584,7 +575,7 @@ def build_rr_weakness_replacements(
         over_ok = (
             gated.get("last_over_sample_adequate", pd.Series(False, index=gated.index)).fillna(False)
             & over_score.notna()
-            & gated["weak_phase"].eq("Death")
+            & (weak["phase"] == "Death")
         )
         gated["candidate_score"] = .85 * gated["model_score"] + .15 * fit_score
         gated.loc[over_ok, "candidate_score"] = (
