@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 
 from cricket_pressure.final_selection import (
+    CONSENSUS_METHODS,
     build_consensus_rankings,
     build_final_selection_candidates,
 )
@@ -77,11 +78,10 @@ def test_consensus_uses_four_pi_variants_and_keeps_xgb_diagnostic_only():
     assert batters["player_id"].tolist() == [10, 20]
     assert batters["methods_supported"].eq(4).all()
     assert "XGBoost" in set(candidates["scoring_method"])
-    assert "XGBoost" not in set(
-        candidates.loc[candidates["scoring_method"].isin([
-            "PI baseline", "PI RRR-heavy", "PI momentum-heavy", "PI stakes-heavy"
-        ]), "scoring_method"]
-    ) or set(batters["methods_supported"]) == {4}
+    assert set(CONSENSUS_METHODS) == {
+        "PI baseline", "PI RRR-heavy", "PI momentum-heavy", "PI stakes-heavy"
+    }
+    assert set(batters["methods_supported"]) == {4}
 
 
 def test_sample_gate_requires_pressure_deliveries_and_matches():
