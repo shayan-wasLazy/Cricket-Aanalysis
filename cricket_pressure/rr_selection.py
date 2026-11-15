@@ -10,6 +10,35 @@ import numpy as np
 import pandas as pd
 
 from .pressure import add_pressure_features, compute_pressure_index
+
+PI_VARIANT_WEIGHTS = {
+    "baseline": {
+        "rrr_pressure": .25, "wicket_pressure": .20, "time_urgency": .15,
+        "momentum_pressure": .15, "death_over_pressure": .10,
+        "target_difficulty": .075, "match_stakes": .075,
+    },
+    "rrr_situation_heavy": {
+        "rrr_pressure": .35, "wicket_pressure": .20, "time_urgency": .15,
+        "momentum_pressure": .10, "death_over_pressure": .08,
+        "target_difficulty": .07, "match_stakes": .05,
+    },
+    "momentum_heavy": {
+        "rrr_pressure": .20, "wicket_pressure": .16, "time_urgency": .12,
+        "momentum_pressure": .25, "death_over_pressure": .10,
+        "target_difficulty": .08, "match_stakes": .09,
+    },
+    "stakes_heavy": {
+        "rrr_pressure": .20, "wicket_pressure": .16, "time_urgency": .12,
+        "momentum_pressure": .12, "death_over_pressure": .08,
+        "target_difficulty": .12, "match_stakes": .20,
+    },
+}
+
+PHASE_PI_TYPE = {
+    "Powerplay": "baseline",
+    "Middle": "momentum_heavy",
+    "Death": "rrr_situation_heavy",
+}
 from .synthetic import score_with_xgb
 
 PI_WEIGHT = 0.80
@@ -52,22 +81,39 @@ def add_project_pressure_scores(frame: pd.DataFrame, xgb_model: Any) -> pd.DataF
 
     data = add_pressure_features(data)
     data = compute_pressure_index(data)
+    eligible = data["pressure_eligible"].fillna(False)
+
+    # Preserve the canonical PI and add sensitivity variants. The phase selector
+    # chooses one PI type according to the cricket task: stable baseline in the
+    # Powerplay, momentum-sensitive in the Middle, and RRR/time-sensitive at Death.
+    for pi_name, weights in PI_VARIANT_WEIGHTS.items():
+        score_col = f"pi_{pi_name}_score"
+        data[score_col] = sum(data[k].fillna(0) * weight for k, weight in weights.items()) * 100
+        data.loc[~eligible, score_col] = np.nan
+
     data["xgb_pressure_score"] = np.nan
     data["xgb_pressure_class"] = None
-    eligible = data["pressure_eligible"].fillna(False)
     if eligible.any():
         scored = score_with_xgb(xgb_model, data.loc[eligible].copy())
         data.loc[eligible, "xgb_pressure_score"] = scored["xgb_pressure_score"].to_numpy()
         data.loc[eligible, "xgb_pressure_class"] = scored["xgb_pressure_class"].to_numpy()
 
-    # The chase PI describes the pressure on the batting side; the bowler-side
-    # pressure is its inverse, so comfortable chases represent higher bowling stress.
+    # The chase PI describes batting-side pressure. Bowling pressure is its inverse.
     data["bowling_pressure_index"] = 100 - data["pressure_index"]
     data["bowling_xgb_pressure_score"] = 100 - data["xgb_pressure_score"]
+    phase_score = pd.Series(np.nan, index=data.index, dtype=float)
+    for phase, pi_name in PHASE_PI_TYPE.items():
+        phase_mask = data["phase"].eq(phase)
+        phase_score.loc[phase_mask] = data.loc[phase_mask, f"pi_{pi_name}_score"]
+    data["phase_pi_type"] = data["phase"].map(PHASE_PI_TYPE)
+    data["phase_pi_score"] = phase_score
+    data["phase_bowling_pi_score"] = 100 - phase_score
     data["is_high_pressure"] = data["pressure_index"].ge(PRESSURE_CUT)
     data["is_xgb_high_pressure"] = data["xgb_pressure_score"].ge(PRESSURE_CUT)
     data["is_bowling_high_pressure"] = data["bowling_pressure_index"].ge(PRESSURE_CUT)
     data["is_bowling_xgb_high_pressure"] = data["bowling_xgb_pressure_score"].ge(PRESSURE_CUT)
+    data["is_phase_pi_high_pressure"] = data["phase_pi_score"].ge(PRESSURE_CUT)
+    data["is_phase_bowling_pi_high_pressure"] = data["phase_bowling_pi_score"].ge(PRESSURE_CUT)
     return data
 
 
@@ -257,7 +303,12 @@ def _pressure_metrics(rows: pd.DataFrame, role: str) -> pd.DataFrame:
 
 
 def build_phase_player_rankings(all_ipl: pd.DataFrame) -> pd.DataFrame:
-    """Create PI, XGB and PI-first combined player rankings for both roles and each phase."""
+    """Create phase-aware PI and XGBoost pressure rankings for both roles.
+
+    PI selection is adaptive by innings phase: Powerplay=baseline,
+    Middle=momentum-heavy, Death=RRR-situation-heavy. For bowlers, the
+    selected batting-side PI is inverted to represent defending-side pressure.
+    """
     outputs = []
     for role in ["Batter", "Bowler"]:
         for phase in ["Powerplay", "Middle", "Death"]:
@@ -266,7 +317,7 @@ def build_phase_player_rankings(all_ipl: pd.DataFrame) -> pd.DataFrame:
                 base["player_key"] = _key(base, "batter_id", "batter")
                 base["player_name"] = base["batter"]
                 specs = [
-                    ("PI", "is_high_pressure", "pressure_index", "pi"),
+                    ("PI", "is_phase_pi_high_pressure", "phase_pi_score", "pi"),
                     ("XGBoost", "is_xgb_high_pressure", "xgb_pressure_score", "xgb"),
                 ]
             else:
@@ -274,13 +325,11 @@ def build_phase_player_rankings(all_ipl: pd.DataFrame) -> pd.DataFrame:
                 base["player_key"] = _key(base, "bowler_id", "bowler")
                 base["player_name"] = base["bowler"]
                 specs = [
-                    ("PI", "is_bowling_high_pressure", "bowling_pressure_index", "pi"),
+                    ("PI", "is_phase_bowling_pi_high_pressure", "phase_bowling_pi_score", "pi"),
                     ("XGBoost", "is_bowling_xgb_high_pressure", "bowling_xgb_pressure_score", "xgb"),
                 ]
             if base.empty:
                 continue
-            # A registry UUID can appear with spelling variants across matches. Keep one
-            # canonical display name per player key so phase joins remain one-to-one.
             canonical_names = base.groupby("player_key")["player_name"].agg(
                 lambda names: names.value_counts().index[0]
             )
@@ -313,6 +362,7 @@ def build_phase_player_rankings(all_ipl: pd.DataFrame) -> pd.DataFrame:
                     "performance_score": f"{prefix}_performance_score",
                 })
                 overall = overall.merge(metrics, on="player_key", how="left")
+
             for prefix in ["pi", "xgb"]:
                 for suffix in ["pressure_deliveries", "pressure_matches", "mean_pressure_score", "performance_score"]:
                     col = f"{prefix}_{suffix}"
@@ -320,6 +370,7 @@ def build_phase_player_rankings(all_ipl: pd.DataFrame) -> pd.DataFrame:
                         overall[col] = np.nan
                 overall[f"{prefix}_percentile"] = overall[f"{prefix}_performance_score"]
                 overall[f"{prefix}_rank"] = overall[f"{prefix}_performance_score"].rank(method="min", ascending=False)
+
             pi_ok = overall["pi_percentile"].notna()
             xgb_ok = overall["xgb_percentile"].notna()
             coverage = PI_WEIGHT * pi_ok.astype(float) + XGB_WEIGHT * xgb_ok.astype(float)
@@ -329,7 +380,11 @@ def build_phase_player_rankings(all_ipl: pd.DataFrame) -> pd.DataFrame:
             overall["decision_rank"] = overall["decision_score"].rank(method="min", ascending=False)
             overall["role"] = role
             overall["phase"] = phase
-            overall["decision_method"] = "80% PI / 20% synthetic XGBoost; available model weights renormalised"
+            overall["pi_type"] = PHASE_PI_TYPE[phase]
+            overall["decision_method"] = (
+                f"80% phase-selected PI ({PHASE_PI_TYPE[phase]}) / 20% synthetic XGBoost; "
+                "available model weights renormalised"
+            )
             outputs.append(overall)
     if not outputs:
         return pd.DataFrame()
@@ -358,12 +413,13 @@ def build_frequent_xi_phase_options(frequent_xi: pd.DataFrame,
             "player_key", "role", "phase", "phase_deliveries", "phase_matches",
             "pi_pressure_deliveries", "pi_pressure_matches", "pi_performance_score", "pi_rank",
             "xgb_pressure_deliveries", "xgb_pressure_matches", "xgb_performance_score", "xgb_rank",
-            "decision_score", "model_weight_coverage", "decision_rank",
+            "decision_score", "model_weight_coverage", "decision_rank", "pi_type",
         ]
         options = options.merge(
             phase_rankings[[c for c in columns if c in phase_rankings]],
             on=["player_key", "role", "phase"], how="left",
         )
+    options["phase_pi_type"] = options.get("pi_type", options["phase"].map(PHASE_PI_TYPE))
     options["phase_option_status"] = np.where(
         options["decision_score"].notna(), "Scored from PI/XG high-pressure samples",
         "No qualifying PI/XG high-pressure sample in this phase",
