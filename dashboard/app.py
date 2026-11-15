@@ -16,6 +16,10 @@ sys.path.insert(0, str(ROOT))
 
 from cricket_pressure.pressure import DEFAULT_WEIGHTS
 from cricket_pressure.synthetic import FEATURE_COLUMNS, CLASS_NAMES, CLASS_MIDPOINTS
+from cricket_pressure.player_rankings import (
+    DEFAULT_RRF_WEIGHTS, DEFAULT_RRF_K, DEFAULT_RRF_MIN_MODEL_SUPPORT,
+    build_weighted_rrf_ensemble,
+)
 
 st.set_page_config(page_title="SupeRR Pressure Lab", page_icon="🏏", layout="wide")
 st.markdown("""
@@ -136,6 +140,7 @@ with right:
 tabs = st.tabs([
     "Synthetic diagnostics", "Scenario playground", "Weight lab",
     "Match disagreement", "Player rankings", "Historical win model", "Score audit", "Recency analysis",
+    "RRF ensemble shortlist",
 ])
 
 with tabs[0]:
@@ -543,6 +548,146 @@ with tabs[6]:
         if not innings_audit.empty:
             with st.expander("Innings-level legal-ball and wicket checks"):
                 st.dataframe(innings_audit, use_container_width=True, hide_index=True)
+
+
+with tabs[8]:
+    st.subheader("Weighted Reciprocal Rank Fusion — candidate shortlist")
+    st.caption(
+        "RRF combines independent player rank lists with unequal model weights. "
+        "This produces a research shortlist for human review; it does not automatically choose the final Top 10."
+    )
+    rankings = data["rankings"]
+    if rankings.empty:
+        st.info("Player rankings have not been generated. Run python refresh_player_rankings.py.")
+    else:
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            rrf_role = st.selectbox("Ensemble role", ["Batter", "Bowler"], key="rrf_role")
+        with c2:
+            rrf_min_deliveries = st.number_input(
+                "Minimum pressure deliveries", min_value=0, max_value=100000,
+                value=100, step=25, key="rrf_min_deliveries",
+            )
+        with c3:
+            rrf_min_matches = st.number_input(
+                "Minimum pressure matches", min_value=0, max_value=10000,
+                value=10, step=1, key="rrf_min_matches",
+            )
+
+        c4, c5, c6 = st.columns(3)
+        with c4:
+            rrf_half_life = st.selectbox(
+                "Recency setting",
+                ["180d", "365d", "540d", "730d", "unweighted"],
+                index=0, key="rrf_half_life",
+            )
+        with c5:
+            rrf_activity = st.selectbox(
+                "Recent pressure activity",
+                ["365d", "730d", "All history"],
+                index=0, key="rrf_activity",
+            )
+        with c6:
+            rrf_min_support = st.selectbox(
+                "Minimum model support",
+                [3, 4, 5],
+                index=0,
+                format_func=lambda x: f"{x} of 5 models",
+                key="rrf_min_support",
+            )
+
+        rrf_top_n = st.slider(
+            "Shortlist size", min_value=10, max_value=30, value=20, step=5,
+            key="rrf_top_n",
+        )
+        max_age = None if rrf_activity == "All history" else (365 if rrf_activity == "365d" else 730)
+        ensemble = build_weighted_rrf_ensemble(
+            rankings,
+            min_deliveries=int(rrf_min_deliveries),
+            min_matches=int(rrf_min_matches),
+            half_life=rrf_half_life,
+            max_days_since_last_match=max_age,
+            min_model_support=int(rrf_min_support),
+            rrf_k=DEFAULT_RRF_K,
+        )
+        role_ensemble = ensemble.loc[ensemble["role"].eq(rrf_role)].copy() if not ensemble.empty else pd.DataFrame()
+
+        st.markdown("#### Unequal model weights")
+        weight_table = pd.DataFrame([
+            {"Scoring method": method, "RRF weight": f"{weight:.0%}"}
+            for method, weight in DEFAULT_RRF_WEIGHTS.items()
+        ])
+        st.dataframe(weight_table, use_container_width=True, hide_index=True)
+        st.caption(
+            "The synthetic-trained XGBoost receives only 5% because it learns a synthetic teacher rule, "
+            "not empirically labelled psychological pressure. The four PI methods are related sensitivity "
+            "variants, so their votes are deliberately not equal."
+        )
+        st.latex(r"\mathrm{RRF}(p)=\sum_m \frac{w_m}{60+\mathrm{rank}_m(p)}")
+
+        if role_ensemble.empty:
+            st.warning(
+                "No players pass the selected sample, recency and model-support gates. "
+                "Try a longer activity window or inspect the minimum-sample settings."
+            )
+        else:
+            shortlist = role_ensemble.head(int(rrf_top_n)).copy()
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Eligible ensemble candidates", f"{len(role_ensemble):,}")
+            m2.metric("Shortlist size", f"{len(shortlist):,}")
+            m3.metric("Median model support", f"{role_ensemble['model_support'].median():.1f}/5")
+            m4.metric("Top candidate RRF score", f"{shortlist.iloc[0]['rrf_score']:.5f}")
+
+            rank_columns = [
+                "rank_pi_baseline", "rank_pi_rrr_heavy", "rank_pi_momentum_heavy",
+                "rank_pi_stakes_heavy", "rank_xgboost",
+            ]
+            show_columns = [
+                "ensemble_rank", "player_name", "rrf_score", "model_support",
+                "model_weight_coverage", *rank_columns,
+                "min_pressure_deliveries_supported", "min_pressure_matches_supported",
+                "last_pressure_match_date", "days_since_last_pressure_match",
+            ]
+            show_columns = [col for col in show_columns if col in shortlist.columns]
+            st.dataframe(
+                shortlist[show_columns].rename(columns={
+                    "ensemble_rank": "RRF rank",
+                    "player_name": "Player",
+                    "rrf_score": "Weighted RRF score",
+                    "model_support": "Model support / 5",
+                    "model_weight_coverage": "Supporting weight",
+                    "rank_pi_baseline": "PI baseline rank",
+                    "rank_pi_rrr_heavy": "RRR-heavy rank",
+                    "rank_pi_momentum_heavy": "Momentum-heavy rank",
+                    "rank_pi_stakes_heavy": "Stakes-heavy rank",
+                    "rank_xgboost": "Synthetic XGB rank",
+                    "min_pressure_deliveries_supported": "Fewest pressure balls in supporting models",
+                    "min_pressure_matches_supported": "Fewest pressure matches in supporting models",
+                    "last_pressure_match_date": "Last pressure appearance",
+                    "days_since_last_pressure_match": "Days since pressure appearance",
+                }),
+                use_container_width=True,
+                hide_index=True,
+            )
+            fig = px.bar(
+                shortlist.sort_values("rrf_score", ascending=True),
+                x="rrf_score", y="player_name", orientation="h",
+                color="model_support",
+                title=f"Weighted RRF shortlist — {rrf_role.lower()}s",
+                labels={
+                    "rrf_score": "Weighted RRF score",
+                    "player_name": "Player",
+                    "model_support": "Model support",
+                },
+            )
+            fig.update_layout(height=max(420, 28 * len(shortlist)), margin=dict(l=10, r=10, t=35, b=10))
+            st.plotly_chart(fig, use_container_width=True)
+
+            st.info(
+                "Use this shortlist to inspect evidence and role fit before choosing your final ten. "
+                "RRF measures cross-model ranking agreement; it is not itself a measure of player quality or pressure uplift."
+            )
+
 
 st.divider()
 st.markdown(
