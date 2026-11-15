@@ -41,6 +41,7 @@ from cricket_pressure.outcome import chronological_match_split
 def test_player_rankings_apply_delivery_and_match_eligibility():
     rows = pd.DataFrame({
         "match_id": [1, 2, 1, 1],
+        "match_date": pd.to_datetime(["2025-01-01","2025-06-01","2025-01-01","2025-01-01"], utc=True),
         "striker_id": [10, 10, 20, 20],
         "striker_name": ["Batter A", "Batter A", "Batter B", "Batter B"],
         "bowler_id": [30, 30, 40, 40],
