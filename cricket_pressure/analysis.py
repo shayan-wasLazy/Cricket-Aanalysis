@@ -14,6 +14,9 @@ from .synthetic import (
     CLASS_NAMES, FEATURE_COLUMNS, generate_synthetic_scenarios,
     train_synthetic_xgb, score_with_xgb,
 )
+from .player_rankings import build_player_rankings, compare_top10_rankings
+from .outcome import train_historical_win_probability
+import re
 
 ALT_WEIGHTS = {
     "baseline": DEFAULT_WEIGHTS,
@@ -197,6 +200,158 @@ def _plot_outputs(synthetic_test: pd.DataFrame, metrics: dict, importance: pd.Da
                 ax.text(j, i, f"{corr.iloc[i,j]:.2f}", ha="center", va="center", color="white" if corr.iloc[i,j] < .55 else "black")
         fig.colorbar(im, ax=ax, label="Spearman ρ")
         fig.tight_layout(); fig.savefig(dirs["figures"] / "weight_sensitivity_heatmap.png", dpi=150); plt.close(fig)
+
+
+def _build_score_audit(states: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Build innings checks and a conservative run-margin reconciliation audit.
+
+    The supplied pack does not contain independent official innings totals.
+    This audit therefore checks internal integrity and compares reconstructed
+    margins with the textual result only for non-DLS run wins with no unresolved
+    bye/legbye deliveries. It never silently labels provisional totals as official.
+    """
+    cols = [
+        "match_id", "innings", "provisional_innings_total", "legal_balls_total",
+        "unresolved_extra_deliveries", "wickets_total", "scheduled_balls_for_audit",
+    ]
+    innings = states[cols].drop_duplicates(["match_id", "innings"]).copy()
+    innings["legal_balls_over_schedule"] = (
+        innings["legal_balls_total"] > innings["scheduled_balls_for_audit"]
+    )
+    innings["wickets_over_limit"] = innings["wickets_total"] > 10
+
+    meta_cols = [c for c in ["match_id", "match_date", "comp_name", "match_format", "season", "result"] if c in states]
+    meta = states[meta_cols].drop_duplicates("match_id").set_index("match_id")
+    audit = meta.copy()
+    for inn in (1, 2):
+        part = innings.loc[innings["innings"].eq(inn)].set_index("match_id")
+        audit[f"provisional_runs_inn{inn}"] = part["provisional_innings_total"]
+        audit[f"legal_balls_inn{inn}"] = part["legal_balls_total"]
+        audit[f"scheduled_balls_inn{inn}"] = part["scheduled_balls_for_audit"]
+        audit[f"unresolved_extras_inn{inn}"] = part["unresolved_extra_deliveries"]
+        audit[f"wickets_inn{inn}"] = part["wickets_total"]
+
+    audit = audit.reset_index()
+    audit["unresolved_extra_deliveries"] = (
+        audit[["unresolved_extras_inn1", "unresolved_extras_inn2"]].fillna(0).sum(axis=1)
+    )
+    audit["reconstructed_run_margin"] = (
+        pd.to_numeric(audit["provisional_runs_inn1"], errors="coerce")
+        - pd.to_numeric(audit["provisional_runs_inn2"], errors="coerce")
+    )
+    result_text = audit.get("result", pd.Series("", index=audit.index)).fillna("").astype(str)
+    audit["reported_run_margin"] = pd.to_numeric(
+        result_text.str.extract(r"(?i)won by\\s+(\\d+)\\s+runs?")[0], errors="coerce"
+    )
+    audit["is_dls_result"] = result_text.str.contains(r"(?i)(D/L|DLS|Duckworth)", regex=True)
+    audit["run_margin_audit_eligible"] = (
+        audit["reported_run_margin"].notna()
+        & ~audit["is_dls_result"]
+        & audit["unresolved_extra_deliveries"].eq(0)
+        & audit["provisional_runs_inn1"].notna()
+        & audit["provisional_runs_inn2"].notna()
+    )
+    audit["run_margin_abs_error"] = (
+        audit["reconstructed_run_margin"] - audit["reported_run_margin"]
+    ).abs().where(audit["run_margin_audit_eligible"])
+    audit["run_margin_audit_status"] = np.select(
+        [
+            audit["is_dls_result"],
+            audit["unresolved_extra_deliveries"].gt(0),
+            audit["reported_run_margin"].isna(),
+            audit["run_margin_abs_error"].eq(0),
+        ],
+        [
+            "not comparable: DLS/DL result",
+            "provisional: unresolved bye/legbye runs",
+            "not a run-margin result",
+            "consistent with reported margin",
+        ],
+        default="mismatch: investigate score reconstruction",
+    )
+    audit["innings_ball_integrity_issue"] = (
+        audit[["legal_balls_inn1", "legal_balls_inn2"]].fillna(0).gt(
+            audit[["scheduled_balls_inn1", "scheduled_balls_inn2"]].fillna(0)
+        ).any(axis=1)
+    )
+    audit["wicket_integrity_issue"] = (
+        audit[["wickets_inn1", "wickets_inn2"]].fillna(0).gt(10).any(axis=1)
+    )
+    return innings, audit
+
+
+def _build_match_disagreements(real: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Summarise where historical PI and synthetic-trained XGB diverge."""
+    d = real.copy()
+    d["pi_xgb_gap"] = d["xgb_pressure_score"] - d["pressure_index"]
+    d["absolute_pi_xgb_gap"] = d["pi_xgb_gap"].abs()
+    detail_cols = [
+        c for c in [
+            "match_id", "match_date", "comp_name", "match_format", "season",
+            "innings_ball_num", "overid", "score_before", "runs_required",
+            "required_run_rate", "wickets_remaining", "balls_remaining",
+            "pressure_index", "xgb_pressure_score", "xgb_pressure_class",
+            "pi_xgb_gap", "absolute_pi_xgb_gap",
+        ] if c in d.columns
+    ]
+    details = d.sort_values("absolute_pi_xgb_gap", ascending=False)[detail_cols].head(500).copy()
+    keys = [c for c in ["match_id", "match_date", "comp_name", "match_format", "season"] if c in d.columns]
+    summary = d.groupby(keys, dropna=False).agg(
+        chase_deliveries=("match_id", "size"),
+        pi_mean=("pressure_index", "mean"),
+        xgb_mean=("xgb_pressure_score", "mean"),
+        mean_absolute_gap=("absolute_pi_xgb_gap", "mean"),
+        max_absolute_gap=("absolute_pi_xgb_gap", "max"),
+        pi_high_deliveries=("pressure_index", lambda s: int((s >= 60).sum())),
+        xgb_high_deliveries=("xgb_pressure_score", lambda s: int((s >= 60).sum())),
+    ).reset_index().sort_values(["mean_absolute_gap", "max_absolute_gap"], ascending=False)
+    return summary, details
+
+
+def _plot_extra_diagnostics(
+    calibration: pd.DataFrame,
+    disagreements: pd.DataFrame,
+    rankings: pd.DataFrame,
+    dirs: dict[str, Path],
+) -> None:
+    if not calibration.empty:
+        fig, ax = plt.subplots(figsize=(6, 5))
+        ax.plot([0, 1], [0, 1], linestyle="--", color="gray", label="Perfect calibration")
+        ax.plot(
+            calibration["mean_predicted_probability"],
+            calibration["observed_win_rate"],
+            marker="o", label="Historical model",
+        )
+        ax.set(xlim=(0, 1), ylim=(0, 1), xlabel="Predicted win probability",
+               ylabel="Observed batting-team win rate", title="Historical outcome model calibration")
+        ax.grid(alpha=.25); ax.legend(); fig.tight_layout()
+        fig.savefig(dirs["figures"] / "historical_win_probability_calibration.png", dpi=150)
+        plt.close(fig)
+    if not disagreements.empty:
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.hist(disagreements["mean_absolute_gap"].dropna(), bins=35)
+        ax.set(xlabel="Mean absolute PI–XGBoost gap per match", ylabel="Matches",
+               title="Match-level pressure-model disagreement")
+        ax.grid(alpha=.2); fig.tight_layout()
+        fig.savefig(dirs["figures"] / "match_disagreement_distribution.png", dpi=150)
+        plt.close(fig)
+    if not rankings.empty:
+        top = rankings.loc[rankings["eligible"] & rankings["rank"].le(10)].copy()
+        for role in ["Batter", "Bowler"]:
+            role_top = top.loc[top["role"].eq(role)]
+            if role_top.empty:
+                continue
+            fig, ax = plt.subplots(figsize=(10, 6))
+            pivot = role_top.pivot_table(
+                index="player_name", columns="scoring_method", values="rank", aggfunc="min"
+            )
+            pivot.plot(kind="barh", ax=ax)
+            ax.invert_yaxis()
+            ax.set(title=f"Top-10 rank positions by pressure model — {role}",
+                   xlabel="Rank (lower is better)", ylabel="Player")
+            ax.grid(axis="x", alpha=.2); fig.tight_layout()
+            fig.savefig(dirs["figures"] / f"top10_rank_comparison_{role.lower()}.png", dpi=150)
+            plt.close(fig)
 
 
 def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int = 42) -> dict:
