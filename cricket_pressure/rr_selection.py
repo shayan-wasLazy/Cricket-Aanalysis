@@ -285,7 +285,10 @@ def _pressure_metrics(rows: pd.DataFrame, role: str) -> pd.DataFrame:
     # Runs on wides/no-balls count against the bowler even though they do not
     # increase the legal-ball denominator. Dots are legal balls with zero runs.
     d["bowler_runs_conceded"] = d["runs_batter"] + d["wides"] + d["no_balls"]
-    d["dot"] = (d["bowler_runs_conceded"].eq(0) & d["is_legal_metric_ball"]).astype(int)
+    delivery_runs = pd.to_numeric(
+        d.get("runs_total", d["bowler_runs_conceded"]), errors="coerce"
+    ).fillna(0)
+    d["dot"] = (delivery_runs.eq(0) & d["is_legal_metric_ball"]).astype(int)
     result = d.groupby(["player_key", "bowler"], as_index=False).agg(
         pressure_deliveries=("is_legal_metric_ball", "sum"),
         pressure_matches=("legal_match_id", "nunique"),
