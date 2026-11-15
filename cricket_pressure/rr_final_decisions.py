@@ -127,7 +127,10 @@ def _player_metrics(frame: pd.DataFrame, role: str, pressure_col: str) -> pd.Dat
         + pd.to_numeric(d["no_balls"], errors="coerce").fillna(0)
     )
     d["credited_wicket"] = _as_bool(d["bowler_credited_wicket"]) if "bowler_credited_wicket" in d else False
-    d["legal_dot"] = d["runs_conceded"].eq(0) & d["is_legal_metric_ball"]
+    delivery_runs = pd.to_numeric(
+        d.get("runs_total", d["runs_conceded"]), errors="coerce"
+    ).fillna(0)
+    d["legal_dot"] = delivery_runs.eq(0) & d["is_legal_metric_ball"]
     result = d.groupby(["player_key", "player_name"], as_index=False).agg(
         deliveries=("is_legal_metric_ball", "sum"), matches=("legal_match_id", "nunique"),
         runs_conceded=("runs_conceded", "sum"), wickets=("credited_wicket", "sum"),
