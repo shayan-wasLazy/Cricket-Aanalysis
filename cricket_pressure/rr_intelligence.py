@@ -575,6 +575,7 @@ def build_rr_intelligence(source: str | Path, output_dir: str | Path,
         phase_gaps=gaps,
         phase_rankings=phase_rankings,
         rr_fit=shortlist,
+        all_ipl_deliveries=all_ipl,
         rr_team=rr_team,
     )
 
