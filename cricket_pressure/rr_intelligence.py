@@ -295,7 +295,10 @@ def _role_phase_metrics(frame: pd.DataFrame, team: str, role: str, phase: str) -
     legal_matches = int(d.loc[legal, "match_id"].nunique())
     conceded = d["runs_batter"] + d["wides"] + d["no_balls"]
     wickets = d["bowler_credited_wicket"].sum()
-    dots = (conceded.eq(0) & legal).sum()
+    delivery_runs = pd.to_numeric(
+        d.get("runs_total", conceded), errors="coerce"
+    ).fillna(0)
+    dots = (delivery_runs.eq(0) & legal).sum()
     return {
         "balls": balls,
         "economy": 6 * conceded.sum() / balls if balls else np.nan,
@@ -360,8 +363,9 @@ def build_player_fit_shortlist(all_ipl: pd.DataFrame, phase_gaps: pd.DataFrame) 
                 d["metric_runs"] = d["runs_batter"] + d["wides"] + d["no_balls"]
                 d["metric_wickets"] = d["bowler_credited_wicket"].astype(int)
                 d["metric_legal_delivery"] = d["is_legal_ball"].fillna(False).astype(int)
+                delivery_runs = pd.to_numeric(d["runs_total"], errors="coerce").fillna(0)
                 d["metric_dots"] = (
-                    d["metric_runs"].eq(0) & d["is_legal_ball"].fillna(False).astype(bool)
+                    delivery_runs.eq(0) & d["is_legal_ball"].fillna(False).astype(bool)
                 ).astype(int)
                 d["metric_boundaries"] = d["is_boundary_four"].astype(int) + d["is_boundary_six"].astype(int)
             if d.empty:
