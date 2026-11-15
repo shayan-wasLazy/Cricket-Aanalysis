@@ -213,7 +213,7 @@ Do **not** run `git clean -fdx` in this project: that command also deletes ignor
 
 ## Recency-weighted performance experiments
 
-Recent performances are often more relevant to a current player-selection decision than older performances. The project therefore compares **no decay, 365-day, 540-day and 730-day exponential half-lives** instead of hard-coding a single recency assumption.
+Recent performances are often more relevant to a current player-selection decision than older performances. Player rankings compare **no decay, 180-day, 365-day, 540-day and 730-day exponential half-lives** instead of hard-coding a single recency assumption. The 180-day setting is the new default for current player selection; longer half-lives remain available for sensitivity analysis.
 
 For a match age of (a) days and half-life (H):
 
@@ -227,12 +227,12 @@ At the half-life, a match receives half the weight of a match on the reference d
 
 For each pressure definition (PI baseline, three PI weight alternatives and synthetic-trained XGBoost), batters and bowlers receive an unweighted ranking plus 365d / 540d / 730d rankings.
 
-- The reference date is the newest valid match date in the supplied analysis data, making reruns deterministic.
+- The reference date defaults to the current UTC date, not the newest match date inside the source data pack. This ensures an inactive player's last appearance continues to age even when the data pack itself is old. Pass an explicit reference date to reproduce a historical selection snapshot.
 - Player eligibility still uses raw pressure deliveries and distinct matches (default: 100 deliveries and 10 matches). Recency does not let a small recent sample bypass these gates.
 - Batter performance is weighted runs per 100 pressure deliveries.
 - Bowler performance is weighted credited wickets per 100 pressure deliveries.
 - Weighted rates are shrunk toward the corresponding weighted role-wide rate using a fixed 100 weighted-delivery-equivalent prior.
-- The dashboard compares Top-10 membership overlap and rank movement across half-lives.
+- The dashboard defaults to a 180-day half-life and offers a recent-pressure-appearance filter (last 365 days, last 730 days, or all history). It displays the last high-pressure appearance, days since that appearance, and pressure deliveries in the last 365 days.
 
 ### Historical match-outcome model
 
