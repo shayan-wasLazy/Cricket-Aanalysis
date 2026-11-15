@@ -337,12 +337,13 @@ The Streamlit dashboard contains an **RR squad intelligence** tab after the RRF 
 
 ### PI / XGBoost phase selector and historical RR frequent XI
 
-The RR build loads the saved synthetic_pressure_xgb.json model and applies the repository's canonical Pressure Index weights and XGBoost feature order to Cricsheet-derived chase states.
+The RR build loads the saved synthetic_pressure_xgb.json model and applies the repository's PI feature definitions plus phase-specific PI weightings to Cricsheet-derived chase states.
 
-- Batting pressure uses the project's canonical pressure_index and XGBoost pressure score.
-- Bowling pressure is the inverse of each chase score (100 minus batter-side pressure), so a comfortable chase is treated as greater stress on the defending bowling side.
-- Players are ranked within role and phase using performance in model-identified high-pressure deliveries: batters by strike rate, boundary rate and dismissal avoidance; bowlers by economy, wickets and dot-ball rate.
-- The decision score uses 80% PI performance percentile and 20% synthetic-XGBoost performance percentile. If a player lacks enough sample for one signal, available weights are renormalised and coverage is shown.
+- Batting pressure uses the selected phase PI and XGBoost chase score.
+- Bowling pressure uses the inverse of the phase PI and XGBoost score, so a comfortable chase represents greater stress on the defending side.
+- Powerplay uses baseline PI, Middle uses momentum-heavy PI, and Death uses RRR-situation-heavy PI.
+- Players are ranked within role and phase using performance in model-identified high-pressure deliveries: batters by strike rate, boundary rate and dismissal avoidance; bowlers by economy, credited wickets and dot-ball rate.
+- The phase decision score uses 80% PI performance percentile and 20% synthetic-XGBoost performance percentile. If a player lacks enough sample for one signal, available weights are renormalised and coverage is shown.
 - Minimum delivery and match gates can be adjusted in the dashboard.
 
 The PI/XGB phase selector & RR XI tab provides:
