@@ -4,41 +4,59 @@ A reproducible research workspace for comparing a transparent, hand-weighted cri
 
 > **Interpretation guardrail:** XGBoost learns a deliberately constructed synthetic teacher rule. Holdout metrics tell us how well it learns that rule—not whether the rule is the true cricket-pressure definition. Applying it to historical states measures model agreement with the PI feature space, not ground-truth validity.
 
-## Project contents
+## Repository contents
 
-- `notebooks/SupeRR_Pressure_Modelling_Comparison.ipynb` — executed end-to-end notebook with analysis, synthetic experiment, metrics and plots.
-- `cricket_pressure/` — reusable feature engineering, PI, synthetic generation and analysis modules.
-- `dashboard/app.py` — Streamlit dashboard for historical PI/XGBoost comparisons, synthetic diagnostics, scenario exploration and PI weight sensitivity.
-- `tests/` — lightweight unit tests for pressure logic.
-- `data/raw/` — small competition metadata tables are included. The full competition data pack is not vendored in this public repository; see the setup instructions below.
-- `data/synthetic/`, `data/processed/`, `outputs/`, `models/` — generated when the pipeline is run. They are included in the downloadable project bundle.
+- `notebooks/SupeRR_Pressure_Modelling_Comparison.ipynb` — end-to-end comparison notebook.
+- `cricket_pressure/` — feature engineering, PI, synthetic generation and evaluation modules.
+- `dashboard/app.py` — Streamlit dashboard for historical comparisons, synthetic diagnostics, scenario exploration and PI weight sensitivity.
+- `tests/` — unit tests for the pressure logic.
+- `dataset/README.md` — instructions for adding the competition CSVs locally.
+- `outputs/`, `models/`, and generated data — created locally by running the analysis; ignored by Git.
 
-## Required source data
+## Dataset setup (required before running)
 
-Obtain the authorized SupeRR Selector data pack and place these files in `data/raw/`:
+After cloning, download the authorized SupeRR Selector data pack and place these six source files directly inside the tracked `dataset/` folder:
 
-- `ball_by_ball.csv` or `ball_by_ball.csv.gz`
-- `matches.csv`
-- `competitions.csv`
-- `teams.csv`
-- `playing_eleven.csv`
-- `competition_team_player_mapping.csv`
+```text
+dataset/
+├── ball_by_ball.csv
+├── matches.csv
+├── competitions.csv
+├── teams.csv
+├── playing_eleven.csv
+└── competition_team_player_mapping.csv
+```
 
-The three small metadata CSVs (`matches.csv`, `competitions.csv`, and `teams.csv`) are included as convenience copies. The ball-by-ball, playing-XI and player-mapping files are not committed to the public repo. Do not redistribute competition data unless its terms permit it.
+The loader also accepts gzip-compressed equivalents such as `ball_by_ball.csv.gz` and `matches.csv.gz`.
 
-## Setup
+**The dataset folder is intentionally gitignored.** Its README remains tracked, but CSVs will not be committed or pushed. Keep the source data local unless the competition terms explicitly allow redistribution. See [dataset/README.md](dataset/README.md) for exact steps and an ignore check.
 
-Python 3.10–3.13 is expected.
+## Clone and install
+
+```bash
+git clone https://github.com/shayan-wasLazy/Cricket-Aanalysis.git
+cd Cricket-Aanalysis
+```
+
+Create and activate a virtual environment:
 
 ```bash
 python -m venv .venv
-# Windows
-.venv\\Scripts\\activate
+# Windows PowerShell
+.venv\\Scripts\\Activate.ps1
+# Windows cmd
+.venv\\Scripts\\activate.bat
 # macOS/Linux
 source .venv/bin/activate
+```
 
+Install dependencies:
+
+```bash
 pip install -r requirements.txt
 ```
+
+Then add the six CSV files to `dataset/`.
 
 ## Run the analysis
 
@@ -48,7 +66,7 @@ From the repository root:
 python run_analysis.py
 ```
 
-This builds delivery-level match states, PI features, synthetic scenarios, the XGBoost classifier, comparisons, CSV outputs, metric JSON files and PNG charts.
+This rebuilds delivery-level match states, PI features, synthetic scenarios, the XGBoost classifier, model comparisons, metrics, CSV exports and PNG charts.
 
 Open the notebook:
 
@@ -56,7 +74,7 @@ Open the notebook:
 jupyter lab notebooks/SupeRR_Pressure_Modelling_Comparison.ipynb
 ```
 
-Launch the dashboard after running the pipeline:
+Launch the dashboard after the analysis has generated its outputs:
 
 ```bash
 streamlit run dashboard/app.py
@@ -74,30 +92,42 @@ streamlit run dashboard/app.py
 | Target difficulty | 7.5% | First-innings target percentile within format/season |
 | Match stakes | 7.5% | Stage/knockout heuristic from supplied match metadata |
 
-Death-over pressure overlaps conceptually with overall time urgency; sensitivity analysis is included to show how much that design choice affects scores.
+Death-over pressure overlaps conceptually with overall time urgency; sensitivity analysis is included to measure the impact of this design choice.
 
 ## Synthetic XGBoost experiment
 
-The generator samples plausible chase states, creates a declared nonlinear teacher score with interactions and small noise, and bins it into Low / Moderate / High / Extreme classes. XGBoost is trained on 78% and evaluated on a stratified 22% holdout. The hand-designed PI baseline is evaluated on the exact same synthetic holdout.
+The generator samples plausible chase states, creates a declared nonlinear teacher score with interactions and small noise, and bins it into Low / Moderate / High / Extreme classes. XGBoost is trained on a stratified train/test split. The hand-designed PI baseline is evaluated on the same synthetic holdout.
 
 XGBoost's stronger synthetic metrics are expected because the synthetic teacher includes nonlinear interactions that a fixed weighted sum cannot reproduce. This is a controlled algorithm experiment—not evidence that XGBoost is more valid for real cricket.
 
 ## Important limitations
 
-1. The supplied `extras1_runs` field appears to be a categorical code, not numeric runs. Bye/legbye run values are unresolved for 3,166 deliveries in the selected innings. Reconcile reconstructed innings totals against official scorecards before trusting the downstream chase states.
-2. Tournament points tables are not part of the pack. The project does not claim to identify mathematically must-win group matches; match stakes are a transparent stage/knockout proxy only.
+1. The supplied `extras1_runs` field appears to be a categorical code, not numeric runs. Bye/legbye run values are unresolved for some deliveries. Reconcile reconstructed innings totals against official scorecards before trusting downstream chase states.
+2. Tournament points tables are not part of the supplied pack. The project does not claim to identify mathematically must-win group matches; match stakes are a transparent stage/knockout proxy only.
 3. Revised overs and targets are applied where available, but shortened innings and score reconstruction still need scorecard validation.
 4. Player pressure summaries are descriptive comparisons, not final top-10 rankings.
 5. No independent pressure ground-truth labels exist. Historical PI–XGBoost correlation is agreement, not validation.
-6. The synthetic holdout classification report measures fidelity to our chosen synthetic rule and should never be presented as real-match predictive performance.
+6. The synthetic holdout classification report measures fidelity to our chosen synthetic rule and must not be presented as real-match predictive performance.
 
-## Next research steps
+## Reproducibility and Git workflow
 
-- Reconcile scores and extras against official scorecards.
+- The default random seed is `42`.
+- Run `python run_analysis.py` to regenerate results locally.
+- Generated outputs, trained model files and `dataset/` contents are ignored by Git.
+- Push code, notebook and documentation changes normally; adding local CSVs will not send those files to GitHub.
+
+To verify the dataset ignore rule:
+
+```bash
+git check-ignore dataset/ball_by_ball.csv
+git status --short
+```
+
+The first command should print the data path. The CSVs should not appear as untracked files.
+
+## Research next steps
+
+- Reconcile reconstructed scores and extras against official scorecards.
 - Add tournament standings and qualification rules to derive genuine must-win states.
-- Train a separate historical win-probability model on outcomes, grouped by match and evaluated chronologically.
-- Assess PI monotonicity, match/season stability, sensitivity and player-ranking stability before submitting final rankings.
-
-## Reproducibility
-
-The default random seed is `42`. Run `python run_analysis.py` to regenerate all analysis outputs. Detailed results are written to `outputs/metrics/experiment_metrics.json`.
+- Train a separate historical win-probability model on actual outcomes, grouped by match and evaluated chronologically.
+- Assess PI monotonicity, match/season stability, weight sensitivity and player-ranking stability before producing final rankings.
