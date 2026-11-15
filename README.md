@@ -252,3 +252,6 @@ Generated files:
 - `models/historical_win_probability_xgb_540d.json` — provisional 540-day outcome model.
 
 **Interpretation:** recency can improve current relevance but can also increase variance by down-weighting older sample. Do not pick the half-life based only on a higher recent player rate. Consider out-of-time model performance, raw sample size, shrinkage and ranking stability together. The 540-day setting is a comparison candidate, not a proven winner.
+
+
+**Chronological model leakage guard:** the historical win-probability model excludes the season-wide target percentile and season-baseline-filled recent run-rate/momentum features, because those were computed using all matches in a season and could indirectly expose future match information to earlier training rows. The outcome model uses only pre-delivery state variables plus match metadata available before play.
