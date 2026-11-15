@@ -58,6 +58,7 @@ def test_player_rankings_apply_delivery_and_match_eligibility():
     )
     batter_pi = rankings.loc[
         rankings["role"].eq("Batter") & rankings["scoring_method"].eq("PI baseline")
+        & rankings["half_life"].eq("unweighted")
     ]
     eligible = batter_pi.loc[batter_pi["eligible"]]
     assert eligible["player_id"].tolist() == [10]
