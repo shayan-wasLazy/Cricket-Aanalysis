@@ -162,6 +162,11 @@ def test_180_day_half_life_reduces_two_year_old_match_to_about_six_percent():
     weights, reference = exponential_recency_weights(
         dates, half_life_days=180, reference_date="2026-11-15"
     )
-    assert np.isclose(weights.iloc[0], 0.0625, atol=1e-6)
+    age_days = (
+        pd.Timestamp("2026-11-15", tz="UTC")
+        - pd.Timestamp("2024-11-15", tz="UTC")
+    ).total_seconds() / 86400.0
+    expected_old_weight = 2 ** (-age_days / 180)
+    assert np.isclose(weights.iloc[0], expected_old_weight, atol=1e-9)
     assert np.isclose(weights.iloc[1], 1.0)
     assert str(reference.date()) == "2026-11-15"
