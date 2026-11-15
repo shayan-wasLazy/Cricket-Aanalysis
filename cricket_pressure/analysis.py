@@ -401,7 +401,7 @@ def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int =
     # Independent historical outcome benchmark: actual chase-side win/loss labels,
     # grouped chronologically by match. This is not trained on synthetic pressure labels.
     outcome_model, outcome_metrics, outcome_predictions, outcome_calibration, outcome_importance = (
-        train_historical_win_probability(states, random_state=seed)
+        train_historical_win_probability(pi_scored, random_state=seed)
     )
     match_summary = real.groupby(["match_format", "season"], dropna=False).agg(
         pressure_deliveries=("match_id", "size"),
