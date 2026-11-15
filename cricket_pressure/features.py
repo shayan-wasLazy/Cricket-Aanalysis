@@ -76,7 +76,7 @@ def build_delivery_states(
 
     required_ball = {"match_id", "innings", "innings_ball_num", "runs", "is_wicket",
                      "extras_type", "extras_2_runs", "striker_id", "striker_name",
-                     "bowler_id", "bowler_name"}
+                     "bowler_id", "bowler_name", "batting_team_id"}
     required_matches = {"match_id", "comp_id", "stage", "knock_out", "win_team_id",
                         "first_inn_revised_overs", "second_inn_revised_overs", "revised_target"}
     required_comp = {"comp_id", "comp_name", "match_format", "season"}
@@ -164,6 +164,11 @@ def build_delivery_states(
         provisional_innings_total=("provisional_total_runs", "sum"),
         legal_balls_total=("is_legal_ball", "sum"),
         unresolved_extra_deliveries=("unresolved_bye_legbye", "sum"),
+        wickets_total=("is_wicket_num", "sum"),
+        scheduled_balls_for_audit=("scheduled_balls", "max"),
+    )
+    bb = bb.merge(
+        innings_totals, on=["match_id", "innings"], how="left", validate="many_to_one"
     )
     first_totals = innings_totals.loc[innings_totals["innings"].eq(1),
         ["match_id", "provisional_innings_total"]].rename(
