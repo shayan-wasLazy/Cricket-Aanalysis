@@ -44,6 +44,7 @@ def test_rrf_joins_role_and_model_metrics_without_column_collisions():
     assert len(result.loc[result["role"].eq("Bowler")]) == 2
     assert "rank_pi_baseline" in result.columns
     assert "selection_score_pi_baseline" in result.columns
+    assert "shrunk_per_100_pi_baseline" in result.columns
     assert "pressure_uplift_per_100_xgboost" in result.columns
     assert "economy_per_over_pi_baseline" in result.columns
     assert "dot_rate_xgboost" in result.columns
