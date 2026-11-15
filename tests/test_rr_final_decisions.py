@@ -33,26 +33,28 @@ def test_phase_specific_pi_and_bowler_pressure_are_role_correct():
 
 def test_bowler_pressure_metrics_use_legal_balls_and_credited_wickets():
     deliveries = pd.DataFrame({
-        "match_id": [1, 1, 1, 2, 2],
-        "bowler_id": ["B"] * 5,
-        "bowler": ["Bowler B"] * 5,
-        "is_legal_ball": [True, True, False, True, True],
-        "runs_batter": [0, 1, 0, 4, 5],
-        "wides": [0, 0, 1, 0, 0],
-        "no_balls": [0, 0, 0, 0, 0],
-        "bowler_credited_wicket": [False, True, False, True, False],
-        "phase_pressure": [60, 60, 60, 60, 60],
+        "match_id": [1, 1, 1, 2, 2, 2],
+        "bowler_id": ["B"] * 6,
+        "bowler": ["Bowler B"] * 6,
+        "is_legal_ball": [True, True, False, True, True, True],
+        "runs_batter": [0, 1, 0, 4, 5, 0],
+        "wides": [0, 0, 1, 0, 0, 0],
+        "no_balls": [0, 0, 0, 0, 0, 0],
+        "byes": [0, 0, 0, 0, 0, 1],
+        "runs_total": [0, 1, 1, 4, 5, 1],
+        "bowler_credited_wicket": [False, True, False, True, False, False],
+        "phase_pressure": [60, 60, 60, 60, 60, 60],
     })
 
     result = _player_metrics(deliveries, "Bowler", "phase_pressure").iloc[0]
 
-    assert result["deliveries"] == 4
+    assert result["deliveries"] == 5
     assert result["matches"] == 2
     assert result["runs_conceded"] == 11
     assert result["wickets"] == 2
-    assert np.isclose(result["economy"], 16.5)
-    assert np.isclose(result["wickets_per_100"], 50.0)
-    assert np.isclose(result["dot_rate"], 25.0)
+    assert np.isclose(result["economy"], 13.2)
+    assert np.isclose(result["wickets_per_100"], 40.0)
+    assert np.isclose(result["dot_rate"], 20.0)
 
 
 
