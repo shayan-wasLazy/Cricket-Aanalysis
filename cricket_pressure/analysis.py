@@ -241,7 +241,7 @@ def _build_score_audit(states: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
     )
     result_text = audit.get("result", pd.Series("", index=audit.index)).fillna("").astype(str)
     audit["reported_run_margin"] = pd.to_numeric(
-        result_text.str.extract(r"(?i)won by\\s+(\\d+)\\s+runs?")[0], errors="coerce"
+        result_text.str.extract(r"(?i)won by\s+(\d+)\s+runs?")[0], errors="coerce"
     )
     audit["is_dls_result"] = result_text.str.contains(r"(?i)(D/L|DLS|Duckworth)", regex=True)
     audit["run_margin_audit_eligible"] = (
@@ -423,7 +423,7 @@ def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int =
         "They do not validate real-world psychological pressure. Historical PI-vs-XGBoost correlation measures agreement only."
     )
     synthetic_metrics_out["source_data_caveat"] = (
-        f"{int(real['unresolved_bye_legbye'].sum()):,} unresolved bye/legbye deliveries occur in the selected pre-delivery dataset; "
+        f"{int(real['unresolved_bye_legbye'].sum()):,} unresolved bye/legbye deliveries occur in the pressure-eligible chase subset; "
         "innings totals and chase states remain provisional until reconciled with official scorecards."
     )
 
