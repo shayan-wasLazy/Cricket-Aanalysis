@@ -11,6 +11,10 @@ dataset/*
 !dataset/README.md
 !dataset/.gitkeep
 
+# Backwards-compatible source data location used by earlier project bundles.
+data/raw/*
+!data/raw/README.md
+
 # Generated local outputs and trained artifacts
 data/processed/
 data/synthetic/
