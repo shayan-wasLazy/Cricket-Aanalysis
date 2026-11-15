@@ -393,10 +393,16 @@ with tabs[7]:
         if rp.empty:
             st.info("No eligible players under these sample thresholds.")
         else:
+            rp["rank_under_current_thresholds"] = np.nan
+            for half, idx in rp.groupby("half_life").groups.items():
+                rp.loc[idx, "rank_under_current_thresholds"] = (
+                    rp.loc[idx, "shrunk_per_100"].rank(method="min", ascending=False)
+                )
             top_sets = {}
             for half in ["unweighted","365d","540d","730d"]:
                 top_sets[half] = set(
-                    rp.loc[rp["half_life"].eq(half)].nsmallest(10, "rank")["player_id"].dropna()
+                    rp.loc[rp["half_life"].eq(half)]
+                    .nsmallest(10, "rank_under_current_thresholds")["player_id"].dropna()
                 )
             overlap_df = pd.DataFrame([
                 {
@@ -408,7 +414,7 @@ with tabs[7]:
             ])
             st.dataframe(overlap_df, use_container_width=True, hide_index=True)
             movement = rp.pivot_table(index=["player_id","player_name"], columns="half_life",
-                                      values="rank", aggfunc="min").reset_index()
+                                      values="rank_under_current_thresholds", aggfunc="min").reset_index()
             if "unweighted" in movement.columns:
                 st.caption("Rank movement by half-life. Lower rank is better; a missing rank means the player is outside the eligible top-ranked group.")
                 st.dataframe(movement.sort_values("unweighted").head(50), use_container_width=True, hide_index=True)
