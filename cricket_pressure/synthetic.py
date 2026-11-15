@@ -4,6 +4,7 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix, mean_absolute_error, r2_score
 from xgboost import XGBClassifier
+from .pressure import DEFAULT_WEIGHTS
 
 FEATURE_COLUMNS = [
     "required_run_rate", "wickets_remaining", "balls_remaining", "scheduled_balls",
@@ -33,8 +34,8 @@ def synthetic_teacher_score(df: pd.DataFrame, seed: int = 11) -> pd.Series:
     # Nonlinear interaction terms intentionally make the synthetic problem more than a linear copy of PI.
     score = 100 * (
         0.20 * r + 0.16 * w + 0.12 * t + 0.16 * m + 0.09 * d +
-        0.10 * target + 0.10 * stakes + 0.07 * (r * d) + 0.05 * (w * d) +
-        0.05 * (m * stakes)
+        0.10 * target + 0.10 * stakes + 0.03 * (r * d) + 0.02 * (w * d) +
+        0.02 * (m * stakes)
     )
     rng = np.random.default_rng(seed)
     score = score + rng.normal(0, 2.0, size=len(score))
@@ -97,13 +98,24 @@ def train_synthetic_xgb(
     test_rows["xgb_predicted_class_id"] = pred
     test_rows["xgb_predicted_class"] = [CLASS_NAMES[i] for i in pred]
     test_rows["xgb_predicted_score"] = proba @ CLASS_MIDPOINTS
+    pi_features = _components(test_rows)
+    pi_score = sum(pi_features[k].fillna(0) * w for k, w in DEFAULT_WEIGHTS.items()) * 100
+    pi_class = pd.cut(pi_score, bins=[-0.001, 30, 60, 80, 100], labels=CLASS_NAMES, include_lowest=True)
+    pi_class_id = pd.Categorical(pi_class, categories=CLASS_NAMES, ordered=True).codes
+    test_rows["pi_baseline_score"] = pi_score
+    test_rows["pi_baseline_class"] = pi_class.astype(str)
     metrics = {
-        "accuracy": float(accuracy_score(y_test, pred)),
-        "macro_f1": float(f1_score(y_test, pred, average="macro")),
-        "teacher_score_mae_vs_class_midpoint": float(mean_absolute_error(test_rows["synthetic_teacher_score"], test_rows["xgb_predicted_score"])),
-        "teacher_score_r2_vs_class_midpoint": float(r2_score(test_rows["synthetic_teacher_score"], test_rows["xgb_predicted_score"])),
+        "xgb_accuracy": float(accuracy_score(y_test, pred)),
+        "xgb_macro_f1": float(f1_score(y_test, pred, average="macro")),
+        "pi_accuracy": float(accuracy_score(y_test, pi_class_id)),
+        "pi_macro_f1": float(f1_score(y_test, pi_class_id, average="macro")),
+        "xgb_minus_pi_accuracy": float(accuracy_score(y_test, pred) - accuracy_score(y_test, pi_class_id)),
+        "xgb_teacher_score_mae_vs_class_midpoint": float(mean_absolute_error(test_rows["synthetic_teacher_score"], test_rows["xgb_predicted_score"])),
+        "pi_teacher_score_mae": float(mean_absolute_error(test_rows["synthetic_teacher_score"], test_rows["pi_baseline_score"])),
+        "teacher_score_r2_vs_xgb_class_midpoint": float(r2_score(test_rows["synthetic_teacher_score"], test_rows["xgb_predicted_score"])),
         "n_train": int(len(X_train)), "n_test": int(len(X_test)),
-        "classification_report": classification_report(y_test, pred, target_names=CLASS_NAMES, output_dict=True, zero_division=0),
+        "xgb_classification_report": classification_report(y_test, pred, target_names=CLASS_NAMES, output_dict=True, zero_division=0),
+        "pi_classification_report": classification_report(y_test, pi_class_id, target_names=CLASS_NAMES, output_dict=True, zero_division=0),
         "confusion_matrix": confusion_matrix(y_test, pred, labels=[0,1,2,3]).tolist(),
     }
     importance = pd.DataFrame({
