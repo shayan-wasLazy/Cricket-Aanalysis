@@ -292,6 +292,7 @@ def _role_phase_metrics(frame: pd.DataFrame, team: str, role: str, phase: str) -
     d = d.loc[team_mask]
     legal = d["is_legal_ball"].fillna(False).astype(bool)
     balls = int(legal.sum())
+    legal_matches = int(d.loc[legal, "match_id"].nunique())
     conceded = d["runs_batter"] + d["wides"] + d["no_balls"]
     wickets = d["bowler_credited_wicket"].sum()
     dots = (conceded.eq(0) & legal).sum()
@@ -300,7 +301,7 @@ def _role_phase_metrics(frame: pd.DataFrame, team: str, role: str, phase: str) -
         "economy": 6 * conceded.sum() / balls if balls else np.nan,
         "wickets_per_100_balls": 100 * wickets / balls if balls else np.nan,
         "dot_rate": 100 * dots / balls if balls else np.nan,
-        "matches": d["match_id"].nunique(),
+        "matches": legal_matches,
     }
 
 
@@ -372,13 +373,15 @@ def build_player_fit_shortlist(all_ipl: pd.DataFrame, phase_gaps: pd.DataFrame) 
             d["pressure_delivery_unit"] = (
                 d["pressure_flag"].astype(int) * d["metric_legal_delivery"].astype(int)
             )
+            d["metric_match_id"] = d["match_id"].where(d["metric_legal_delivery"].gt(0))
+            d["pressure_match_id"] = d["match_id"].where(d["pressure_delivery_unit"].gt(0))
             grouped = d.groupby(["player_id", name_col], dropna=False).agg(
                 deliveries=("metric_legal_delivery", "sum"),
                 runs=("metric_runs", "sum"),
                 wickets=("metric_wickets", "sum"),
                 dots=("metric_dots", "sum"),
                 boundaries=("metric_boundaries", "sum"),
-                matches=("match_id", "nunique"),
+                matches=("metric_match_id", "nunique"),
                 pressure_deliveries=("pressure_delivery_unit", "sum"),
                 pressure_runs=("metric_runs", lambda s: s[d.loc[s.index, "pressure_flag"]].sum()),
                 pressure_matches=("match_id", lambda s: s[d.loc[s.index, "pressure_flag"]].nunique()),
