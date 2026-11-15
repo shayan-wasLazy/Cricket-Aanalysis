@@ -652,6 +652,8 @@ def build_rr_intelligence(source: str | Path, output_dir: str | Path,
             "team_need_score", "decision_score", "weakness_score", "weakness_status",
             "rr_pi_pressure_deliveries", "rr_pi_pressure_matches",
             "rr_last_over_deliveries", "rr_last_over_matches", "rr_last_over_uplift",
+            "rr_last_over_boundary_delta", "rr_last_over_dismissal_delta",
+            "rr_last_over_wicket_delta", "rr_last_over_dot_delta",
             "last_over_weakness_score", "rr_last_over_sample_adequate", "weakness_reason",
         ]
         review_columns = [c for c in review_columns if c in xi_review.columns]
