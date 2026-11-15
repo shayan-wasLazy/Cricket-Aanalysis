@@ -85,15 +85,19 @@ def _summarise_role(
     d["weighted_deliveries"] = d["recency_weight"].astype(float)
     d["weighted_performance"] = d[count_col].astype(float) * d["recency_weight"].astype(float)
 
-    grouped = d.groupby(["player_id", "player_name"], dropna=False).agg(
-        pressure_deliveries=("match_id", "size"),
-        pressure_matches=("match_id", "nunique"),
-        raw_performance=(count_col, "sum"),
-        weighted_deliveries=("weighted_deliveries", "sum"),
-        weighted_performance=("weighted_performance", "sum"),
-        batter_runs=(count_col, "sum") if role == "Batter" else ("weighted_performance", "sum"),
-        dismissals=("dismissal_of_player", "sum"),
-    ).reset_index()
+    aggregations = {
+        "pressure_deliveries": ("match_id", "size"),
+        "pressure_matches": ("match_id", "nunique"),
+        "raw_performance": (count_col, "sum"),
+        "weighted_deliveries": ("weighted_deliveries", "sum"),
+        "weighted_performance": ("weighted_performance", "sum"),
+        "dismissals": ("dismissal_of_player", "sum"),
+    }
+    grouped = (
+        d.groupby(["player_id", "player_name"], dropna=False)
+        .agg(**aggregations)
+        .reset_index()
+    )
 
     # Weighted population baseline is computed across all eligible-role rows
     # within this pressure definition and half-life.
