@@ -202,7 +202,7 @@ def _plot_outputs(synthetic_test: pd.DataFrame, metrics: dict, importance: pd.Da
 def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int = 42) -> dict:
     root = Path(project_root)
     dirs = _ensure_dirs(root)
-    tables = load_source_tables(root / "data" / "raw")
+    tables = load_source_tables(root / "dataset")
     states = build_delivery_states(tables)
     enriched = add_pressure_features(states)
     pi_scored = compute_pressure_index(enriched)
