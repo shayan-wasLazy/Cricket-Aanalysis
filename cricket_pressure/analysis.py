@@ -248,7 +248,7 @@ def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int =
     ).reset_index()
     scenario_lab = _build_scenario_lab(model)
 
-    synthetic_metrics_out = {k: v for k, v in synthetic_metrics.items() if k not in {"classification_report", "confusion_matrix"}}
+    synthetic_metrics_out = {k: v for k, v in synthetic_metrics.items() if k not in {"xgb_classification_report", "pi_classification_report", "confusion_matrix"}}
     synthetic_metrics_out["real_state_count"] = int(len(real))
     synthetic_metrics_out["real_match_count"] = int(real["match_id"].nunique())
     synthetic_metrics_out["real_pi_xgb_spearman"] = real_corr
@@ -273,8 +273,10 @@ def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int =
     extras["importance"].to_csv(dirs["outputs"] / "xgb_feature_importance.csv", index=False)
     with open(dirs["metrics"] / "experiment_metrics.json", "w", encoding="utf-8") as f:
         json.dump(_json_safe(synthetic_metrics_out), f, indent=2)
-    with open(dirs["metrics"] / "synthetic_classification_report.json", "w", encoding="utf-8") as f:
-        json.dump(_json_safe(synthetic_metrics["classification_report"]), f, indent=2)
+    with open(dirs["metrics"] / "synthetic_xgb_classification_report.json", "w", encoding="utf-8") as f:
+        json.dump(_json_safe(synthetic_metrics["xgb_classification_report"]), f, indent=2)
+    with open(dirs["metrics"] / "synthetic_pi_classification_report.json", "w", encoding="utf-8") as f:
+        json.dump(_json_safe(synthetic_metrics["pi_classification_report"]), f, indent=2)
     model.save_model(dirs["models"] / "synthetic_pressure_xgb.json")
     _plot_outputs(synthetic_test, synthetic_metrics, extras["importance"], real, sensitivity, dirs)
 
@@ -284,8 +286,10 @@ def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int =
         "chase_pressure_deliveries": int(len(real)),
         "chase_matches": int(real["match_id"].nunique()),
         "unresolved_bye_legbye_deliveries": int(states["unresolved_bye_legbye"].sum()),
-        "synthetic_accuracy": synthetic_metrics["accuracy"],
-        "synthetic_macro_f1": synthetic_metrics["macro_f1"],
+        "synthetic_xgb_accuracy": synthetic_metrics["xgb_accuracy"],
+        "synthetic_xgb_macro_f1": synthetic_metrics["xgb_macro_f1"],
+        "synthetic_pi_accuracy": synthetic_metrics["pi_accuracy"],
+        "synthetic_pi_macro_f1": synthetic_metrics["pi_macro_f1"],
         "real_pi_xgb_spearman": real_corr,
         "real_pi_xgb_pearson": real_pearson,
         "mean_pi": float(real["pressure_index"].mean()),
