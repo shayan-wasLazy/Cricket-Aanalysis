@@ -17,9 +17,6 @@ HISTORICAL_FEATURES = [
     "score_before",
     "legal_balls_before",
     "current_run_rate",
-    "recent_run_rate_12",
-    "score_momentum_gap",
-    "target_percentile",
     "match_stakes",
     "is_t20i",
 ]
