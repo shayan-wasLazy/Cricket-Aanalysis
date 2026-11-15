@@ -517,9 +517,9 @@ def build_rr_weakness_replacements(
         review["role"].eq("Batter"), batter_last_score, bowler_last_score
     ).clip(0, 100)
     review["last_over_weakness_score"] = review["last_over_weakness_score"].fillna(0.0)
-    last_over_sample_ok = review.get(
+    last_over_sample_ok = _as_bool(review.get(
         "rr_last_over_sample_adequate", pd.Series(False, index=review.index)
-    ).fillna(False)
+    ))
     review.loc[~last_over_sample_ok, "last_over_weakness_score"] = 0.0
     last_over_drop = last_over_sample_ok & review["last_over_weakness_score"].ge(50)
     review["underperformance_component"] = np.maximum(
