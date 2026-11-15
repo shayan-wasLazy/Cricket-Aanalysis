@@ -178,8 +178,9 @@ def _aggregate_player_matches(
         reliability = _weighted_reliability(
             player_matches, population_rate, prior_matches, risk_penalty
         )
-        pressure_deliveries = int(player_matches["pressure_deliveries"].sum())
-        pressure_matches = int(player_matches["match_id"].nunique())
+        valid_match_rows = player_matches.loc[player_matches["match_rate"].notna()].copy()
+        pressure_deliveries = int(valid_match_rows["performance_denominator"].sum())
+        pressure_matches = int(valid_match_rows["match_id"].nunique())
         raw_denominator = float(player_matches["performance_denominator"].sum())
         raw_numerator = float(player_matches["performance_numerator"].sum())
         weighted_denominator = float(
