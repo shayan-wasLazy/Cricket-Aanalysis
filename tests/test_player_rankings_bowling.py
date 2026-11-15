@@ -29,7 +29,7 @@ def test_global_bowler_economy_includes_wides_but_uses_legal_balls_and_matches()
     assert result["pressure_deliveries"] == 3
     # Match 3 had only a wide, so it must not count as a legal-ball pressure match.
     assert result["pressure_matches"] == 2
-    assert result["raw_runs_conceded"] == 2
+    assert result["raw_runs_conceded"] == 3
     assert result["raw_performance"] == 1
-    assert result["economy_per_over"] == 4.0
+    assert result["economy_per_over"] == 6.0
     assert result["dot_rate"] == (100.0 / 3.0)
