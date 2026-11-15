@@ -134,6 +134,112 @@ def _player_metrics(frame: pd.DataFrame, role: str, pressure_col: str) -> pd.Dat
     return result
 
 
+def _last_over_comparison(
+    frame: pd.DataFrame,
+    role: str,
+    pressure_flag: str,
+    baseline_flag: str,
+    pressure_col: str,
+    prefix: str,
+) -> pd.DataFrame:
+    """Compare high-pressure last-over performance with the same role's lower-pressure last-over baseline."""
+    if frame.empty or "balls_remaining" not in frame:
+        return pd.DataFrame()
+    last = frame.loc[
+        _as_bool(frame.get("chase_active", pd.Series(False, index=frame.index)))
+        & pd.to_numeric(frame["balls_remaining"], errors="coerce").le(6)
+    ].copy()
+    if last.empty:
+        return pd.DataFrame()
+
+    high = _player_metrics(last.loc[_as_bool(last[pressure_flag])], role, pressure_col)
+    base = _player_metrics(last.loc[_as_bool(last[baseline_flag])], role, pressure_col)
+    if high.empty:
+        return pd.DataFrame()
+    rename_high = {
+        "deliveries": f"{prefix}_deliveries",
+        "matches": f"{prefix}_matches",
+        "strike_rate": f"{prefix}_strike_rate",
+        "boundary_rate": f"{prefix}_boundary_rate",
+        "dismissals_per_100": f"{prefix}_dismissals_per_100",
+        "economy": f"{prefix}_economy",
+        "wickets_per_100": f"{prefix}_wickets_per_100",
+        "dot_rate": f"{prefix}_dot_rate",
+    }
+    rename_base = {
+        "deliveries": f"{prefix}_baseline_deliveries",
+        "matches": f"{prefix}_baseline_matches",
+        "strike_rate": f"{prefix}_baseline_strike_rate",
+        "boundary_rate": f"{prefix}_baseline_boundary_rate",
+        "dismissals_per_100": f"{prefix}_baseline_dismissals_per_100",
+        "economy": f"{prefix}_baseline_economy",
+        "wickets_per_100": f"{prefix}_baseline_wickets_per_100",
+        "dot_rate": f"{prefix}_baseline_dot_rate",
+    }
+    high = high.rename(columns=rename_high)
+    base = base.rename(columns=rename_base)
+    high = high[["player_key", "player_name"] + [c for c in rename_high.values() if c in high]]
+    if not base.empty:
+        base = base[["player_key", "player_name"] + [c for c in rename_base.values() if c in base]]
+        high = high.merge(base, on=["player_key", "player_name"], how="left")
+    if role == "Batter":
+        high[f"{prefix}_uplift"] = (
+            high.get(f"{prefix}_strike_rate") - high.get(f"{prefix}_baseline_strike_rate")
+        )
+        high[f"{prefix}_dismissal_delta"] = (
+            high.get(f"{prefix}_dismissals_per_100") - high.get(f"{prefix}_baseline_dismissals_per_100")
+        )
+    else:
+        # Positive means the bowler conceded fewer runs per over in pressure.
+        high[f"{prefix}_uplift"] = (
+            high.get(f"{prefix}_baseline_economy") - high.get(f"{prefix}_economy")
+        )
+        high[f"{prefix}_wicket_delta"] = (
+            high.get(f"{prefix}_wickets_per_100") - high.get(f"{prefix}_baseline_wickets_per_100")
+        )
+        high[f"{prefix}_dot_delta"] = high.get(f"{prefix}_dot_rate") - high.get(f"{prefix}_baseline_dot_rate")
+    high[f"{prefix}_sample_adequate"] = (
+        pd.to_numeric(high[f"{prefix}_deliveries"], errors="coerce").fillna(0).ge(8)
+        & pd.to_numeric(high[f"{prefix}_matches"], errors="coerce").fillna(0).ge(2)
+    )
+    return high
+
+
+def _all_ipl_last_over_fit(all_ipl_deliveries: pd.DataFrame | None) -> pd.DataFrame:
+    """Build role-correct all-IPL last-over candidate scores for the replacement selector."""
+    if all_ipl_deliveries is None or all_ipl_deliveries.empty:
+        return pd.DataFrame()
+    data = _add_phase_pi(all_ipl_deliveries)
+    frames = []
+    for role in ("Batter", "Bowler"):
+        if role == "Batter":
+            flag, baseline_flag, pressure_col = "phase_pi_high", "phase_pi_baseline", "phase_pi_score"
+        else:
+            flag, baseline_flag, pressure_col = (
+                "phase_bowling_pi_high", "phase_bowling_pi_baseline", "phase_bowling_pi_score"
+            )
+        metrics = _last_over_comparison(
+            data, role, flag, baseline_flag, pressure_col, "last_over"
+        )
+        if metrics.empty:
+            continue
+        if role == "Batter":
+            metrics["last_over_fit_score"] = 100 * (
+                .50 * metrics["last_over_strike_rate"].rank(pct=True)
+                + .30 * metrics["last_over_boundary_rate"].rank(pct=True)
+                + .20 * metrics["last_over_dismissals_per_100"].rank(pct=True, ascending=False)
+            )
+        else:
+            metrics["last_over_fit_score"] = 100 * (
+                .40 * metrics["last_over_economy"].rank(pct=True, ascending=False)
+                + .35 * metrics["last_over_wickets_per_100"].rank(pct=True)
+                + .25 * metrics["last_over_dot_rate"].rank(pct=True)
+            )
+        metrics["role"] = role
+        frames.append(metrics)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
 def _rr_player_phase_record(rr_rows: pd.DataFrame, role: str, phase: str, rr_team: str) -> pd.DataFrame:
     d = rr_rows.loc[rr_rows["phase"].eq(phase) & _as_bool(rr_rows["chase_active"])].copy()
     if role == "Batter":
@@ -156,6 +262,9 @@ def _rr_player_phase_record(rr_rows: pd.DataFrame, role: str, phase: str, rr_tea
     pi = _player_metrics(pi_rows, role, pi_pressure_col)
     base = _player_metrics(base_rows, role, pi_pressure_col)
     xgb = _player_metrics(xgb_rows, role, xgb_pressure_col)
+    last_over = _last_over_comparison(
+        d, role, pi_high, pi_base, pi_pressure_col, "rr_last_over"
+    )
 
     if not pi.empty:
         pi = pi.rename(columns={
@@ -184,6 +293,11 @@ def _rr_player_phase_record(rr_rows: pd.DataFrame, role: str, phase: str, rr_tea
         result = result.merge(base, on=["player_key", "player_name"], how="left")
     if not xgb.empty:
         result = result.merge(xgb, on=["player_key", "player_name"], how="left")
+    if not last_over.empty:
+        last_cols = ["player_key", "player_name"] + [
+            c for c in last_over.columns if c not in {"player_key", "player_name"}
+        ]
+        result = result.merge(last_over[last_cols], on=["player_key", "player_name"], how="left")
     expected = (
         ["rr_pi_pressure_deliveries", "rr_pi_pressure_matches", "rr_pi_pressure_strike_rate",
          "rr_pi_pressure_boundary_rate", "rr_pi_pressure_dismissals_per_100",
@@ -235,6 +349,7 @@ def build_rr_weakness_replacements(
     phase_gaps: pd.DataFrame,
     phase_rankings: pd.DataFrame,
     rr_fit: pd.DataFrame,
+    all_ipl_deliveries: pd.DataFrame | None = None,
     rr_team: str = "Rajasthan Royals",
     min_candidate_pressure_balls: int = 20,
     min_candidate_pressure_matches: int = 3,
@@ -244,6 +359,7 @@ def build_rr_weakness_replacements(
     if rr_deliveries.empty or frequent_xi.empty:
         return pd.DataFrame(), pd.DataFrame()
     rr = _add_phase_pi(rr_deliveries)
+    last_over_fit = _all_ipl_last_over_fit(all_ipl_deliveries)
     xi = frequent_xi.copy()
     xi["player_key"] = xi["player_id"].astype(str)
 
@@ -335,10 +451,29 @@ def build_rr_weakness_replacements(
 
     adequate = _as_bool(review.get("rr_pressure_sample_adequate", pd.Series(False, index=review.index)))
     pressure_drop = review["rr_pressure_underperformance_score"].ge(50)
+    last_over_drop = (
+        review.get("rr_last_over_sample_adequate", pd.Series(False, index=review.index)).fillna(False)
+        & (
+            (review.get("rr_last_over_uplift", pd.Series(np.nan, index=review.index)).lt(-15))
+            if review.get("role", pd.Series("", index=review.index)).eq("Batter").all()
+            else pd.Series(False, index=review.index)
+        )
+    )
+    # Bowler last-over economy improvement is sign-reversed: a negative uplift means worse pressure economy.
+    if "role" in review:
+        batter_last_drop = review["role"].eq("Batter") & review.get(
+            "rr_last_over_uplift", pd.Series(np.nan, index=review.index)
+        ).lt(-15)
+        bowler_last_drop = review["role"].eq("Bowler") & review.get(
+            "rr_last_over_uplift", pd.Series(np.nan, index=review.index)
+        ).lt(-2.0)
+        last_over_drop = review.get(
+            "rr_last_over_sample_adequate", pd.Series(False, index=review.index)
+        ).fillna(False) & (batter_last_drop | bowler_last_drop)
     model_low = review["decision_score"].lt(45)
     team_need = review["team_need_score"].ge(35)
     review["weakness_status"] = np.select(
-        [adequate & (pressure_drop | (model_low & team_need)), ~adequate & team_need],
+        [adequate & (pressure_drop | last_over_drop | (model_low & team_need)), ~adequate & team_need],
         ["Pressure weakness supported by RR sample", "Squad need — individual RR pressure sample is limited"],
         default="No strong weakness signal",
     )
@@ -350,6 +485,17 @@ def build_rr_weakness_replacements(
     reasons = []
     for _, row in review.iterrows():
         parts = [f"{row['phase']} {row['role'].lower()} need score {row['team_need_score']:.1f}/100"]
+        if bool(row.get("rr_last_over_sample_adequate", False)):
+            if row["role"] == "Batter" and pd.notna(row.get("rr_last_over_uplift")):
+                parts.append(
+                    f"last-over pressure strike-rate uplift is {row['rr_last_over_uplift']:+.1f} "
+                    "points vs the player's lower-pressure last-over baseline"
+                )
+            elif row["role"] == "Bowler" and pd.notna(row.get("rr_last_over_uplift")):
+                parts.append(
+                    f"last-over pressure economy improvement is {row['rr_last_over_uplift']:+.2f} "
+                    "runs/over vs the player's lower-pressure last-over baseline"
+                )
         if row["role"] == "Batter" and pd.notna(row.get("pressure_sr_uplift")):
             direction = "falls" if row["pressure_sr_uplift"] < 0 else "rises"
             parts.append(
@@ -415,10 +561,41 @@ def build_rr_weakness_replacements(
         if gated.empty:
             continue
 
+        if not last_over_fit.empty:
+            last_fit = last_over_fit.copy()
+            last_fit["player_key"] = last_fit["player_key"].astype(str)
+            last_fit_cols = ["player_key", "role", "last_over_fit_score",
+                             "last_over_deliveries", "last_over_matches", "last_over_sample_adequate"]
+            last_fit_cols = [c for c in last_fit_cols if c in last_fit]
+            gated = gated.merge(
+                last_fit[last_fit_cols].drop_duplicates(["player_key", "role"]),
+                on=["player_key", "role"], how="left",
+            )
+        else:
+            gated["last_over_fit_score"] = np.nan
+            gated["last_over_deliveries"] = np.nan
+            gated["last_over_matches"] = np.nan
+            gated["last_over_sample_adequate"] = False
+
         gated["model_score"] = pd.to_numeric(gated["decision_score"], errors="coerce")
         fit_score = pd.to_numeric(gated.get("player_fit_score"), errors="coerce")
-        gated["candidate_score"] = (
-            .85 * gated["model_score"] + .15 * fit_score.fillna(gated["model_score"])
+        fit_score = fit_score.fillna(gated["model_score"])
+        over_score = pd.to_numeric(gated["last_over_fit_score"], errors="coerce")
+        over_ok = (
+            gated.get("last_over_sample_adequate", pd.Series(False, index=gated.index)).fillna(False)
+            & over_score.notna()
+            & gated["weak_phase"].eq("Death")
+        )
+        gated["candidate_score"] = .85 * gated["model_score"] + .15 * fit_score
+        gated.loc[over_ok, "candidate_score"] = (
+            .75 * gated.loc[over_ok, "model_score"]
+            + .10 * fit_score.loc[over_ok]
+            + .15 * over_score.loc[over_ok]
+        )
+        gated["last_over_candidate_evidence"] = np.where(
+            over_ok,
+            "Last-over pressure sample included in score",
+            "Last-over sample too small or unavailable; death-phase score used",
         )
         sort_col = "pi_pressure_deliveries" if "pi_pressure_deliveries" in gated else "phase_deliveries"
         gated = gated.sort_values(["candidate_score", sort_col], ascending=False).head(top_candidates).copy()
@@ -430,7 +607,7 @@ def build_rr_weakness_replacements(
         gated["weakness_reason"] = weak["weakness_reason"]
         gated["candidate_fit_reason"] = (
             f"Best {weak['role'].lower()} option for {weak['phase']} using 80/20 PI/XGBoost pressure score, "
-            "with phase-fit metrics as a secondary check"
+            "with phase-fit metrics as a secondary check; last-over performance is added only with an adequate sample"
         )
         replacements.append(gated)
 
