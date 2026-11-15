@@ -84,6 +84,8 @@ def load_data():
         "rr_frequent_xi_options": _read_optional(OUT / "rr_intelligence" / "rr_frequent_xi_phase_options.csv"),
         "rr_xi_review": _read_optional(OUT / "rr_intelligence" / "rr_xi_pressure_weakness_review.csv"),
         "rr_replacements": _read_optional(OUT / "rr_intelligence" / "rr_xi_replacement_shortlist.csv"),
+        "rr_report": (OUT / "rr_intelligence" / "rr_intelligence_report.md").read_text(encoding="utf-8")
+            if (OUT / "rr_intelligence" / "rr_intelligence_report.md").exists() else "",
 
     }
 
@@ -972,7 +974,9 @@ with tabs[10]:
 
 with tabs[11]:
     st.subheader("Final submission rankings + RR XI replacement plan")
-    submission_tab, rr_plan_tab = st.tabs(["Final Top 10 — IPL + T20I", "RR XI weakness → replacement"])
+    submission_tab, rr_plan_tab, rr_top_tab = st.tabs([
+        "Final Top 10 — IPL + T20I", "RR XI weakness → replacement", "RR report + phase Top 10"
+    ])
 
     with submission_tab:
         st.caption(
@@ -1240,6 +1244,82 @@ with tabs[11]:
             st.warning(
                 "The frequent XI is historical IPL 2026 usage, not an official 2027 retained squad. "
                 "Auction availability, overseas slots, budget and retention status are not inferred."
+            )
+
+
+
+    with rr_top_tab:
+        st.subheader("RR intelligence report and phase-specific Top 10")
+        st.caption(
+            "These RR lists rank players separately within each match phase using the phase-selected PI "
+            "and synthetic-trained XGBoost decision score. They are not the same as the competition-wide "
+            "IPL + T20I RRF Top 10 above, and the XGBoost component is not empirical pressure ground truth."
+        )
+        rr_report = data.get("rr_report", "")
+        if rr_report:
+            with st.expander("Open generated RR intelligence report", expanded=False):
+                st.markdown(rr_report)
+        else:
+            st.info("RR report not found. Run the RR intelligence build script to generate it.")
+
+        phase_rankings = data["rr_phase_rankings"]
+        if phase_rankings.empty:
+            st.warning("RR phase rankings are missing. Run the RR intelligence build script, then refresh this page.")
+        else:
+            phase_choice = st.selectbox(
+                "Select phase for RR Top 10", ["Powerplay", "Middle", "Death"],
+                index=2, key="rr_top10_phase",
+            )
+            batter_top = phase_rankings.loc[
+                phase_rankings["role"].eq("Batter") & phase_rankings["phase"].eq(phase_choice)
+            ].copy()
+            bowler_top = phase_rankings.loc[
+                phase_rankings["role"].eq("Bowler") & phase_rankings["phase"].eq(phase_choice)
+            ].copy()
+            for frame in (batter_top, bowler_top):
+                frame["decision_score"] = pd.to_numeric(frame["decision_score"], errors="coerce")
+            batter_top = batter_top.dropna(subset=["decision_score"]).sort_values(
+                ["decision_score", "pi_pressure_deliveries"], ascending=[False, False]
+            ).head(10).copy()
+            bowler_top = bowler_top.dropna(subset=["decision_score"]).sort_values(
+                ["decision_score", "pi_pressure_deliveries"], ascending=[False, False]
+            ).head(10).copy()
+            batter_top.insert(0, "Top 10 rank", range(1, len(batter_top) + 1))
+            bowler_top.insert(0, "Top 10 rank", range(1, len(bowler_top) + 1))
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown(f"**RR/ IPL Top 10 batters — {phase_choice}**")
+                cols = [c for c in [
+                    "Top 10 rank", "player_name", "decision_score", "pi_performance_score",
+                    "xgb_performance_score", "pi_pressure_deliveries", "pi_pressure_matches",
+                    "xgb_pressure_deliveries", "xgb_pressure_matches", "phase_deliveries",
+                    "phase_matches", "pi_type",
+                ] if c in batter_top.columns]
+                st.dataframe(batter_top[cols], use_container_width=True, hide_index=True)
+                st.download_button(
+                    "Download phase batter Top 10",
+                    batter_top.to_csv(index=False).encode("utf-8"),
+                    file_name=f"rr_top10_batters_{phase_choice.lower()}.csv",
+                    mime="text/csv", key="download_rr_phase_batters",
+                )
+            with c2:
+                st.markdown(f"**RR/ IPL Top 10 bowlers — {phase_choice}**")
+                cols = [c for c in [
+                    "Top 10 rank", "player_name", "decision_score", "pi_performance_score",
+                    "xgb_performance_score", "pi_pressure_deliveries", "pi_pressure_matches",
+                    "xgb_pressure_deliveries", "xgb_pressure_matches", "phase_deliveries",
+                    "phase_matches", "pi_type",
+                ] if c in bowler_top.columns]
+                st.dataframe(bowler_top[cols], use_container_width=True, hide_index=True)
+                st.download_button(
+                    "Download phase bowler Top 10",
+                    bowler_top.to_csv(index=False).encode("utf-8"),
+                    file_name=f"rr_top10_bowlers_{phase_choice.lower()}.csv",
+                    mime="text/csv", key="download_rr_phase_bowlers",
+                )
+            st.caption(
+                "Rankings are phase-specific and use all IPL seasons included in the RR build (currently 2022–2026). "
+                "A player can appear in more than one phase. Check pressure-ball and match counts before interpreting a rank."
             )
 
 
