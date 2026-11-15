@@ -247,7 +247,14 @@ with tabs[3]:
         st.info("No match disagreement file found. Run the latest analysis pipeline.")
     else:
         st.dataframe(disagreements.head(30), use_container_width=True, hide_index=True)
-        opts = disagreements["match_id"].dropna().astype(int).tolist()
+        visible_match_ids = set(view["match_id"].dropna().astype(int).tolist())
+        filtered_disagreements = disagreements.loc[
+            pd.to_numeric(disagreements["match_id"], errors="coerce").isin(visible_match_ids)
+        ]
+        opts = filtered_disagreements["match_id"].dropna().astype(int).tolist()
+        if not opts:
+            st.info("No disagreement matches remain after the current format/season filters.")
+            st.stop()
         selected_match = st.selectbox("Inspect match ID", opts, key="disagreement_match")
         match_rows = view.loc[view["match_id"].eq(selected_match)].sort_values("innings_ball_num")
         if not match_rows.empty:
