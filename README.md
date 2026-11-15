@@ -394,6 +394,14 @@ The player scoring logic is role-specific:
   the player's own low-bowling-pressure baseline. The selection score weights
   wicket-rate percentile (45%), economy percentile (20%), dot rate (15%), and
   personal wicket-rate uplift (20%).
+- **Bowling accounting:** wides and no-balls are included in runs charged to the
+  bowler, but excluded from legal-ball denominators. Byes and leg-byes are not
+  charged to the bowler; however, a legal delivery that produces byes/leg-byes
+  is not a dot ball. Dot rate therefore uses total runs off the delivery, while
+  economy uses only runs charged to the bowler. In the supplied IPL/T20I CSV,
+  bye/leg-bye run reconstruction is incomplete for some rows, so global dot
+  metrics involving those rows remain provisional; the Cricsheet RR source has
+  complete delivery-run values.
 
 The RRF weight assigned to synthetic-trained XGBoost is intentionally only 5%.
 Its labels are a declared synthetic teacher rule; its holdout metrics do not
