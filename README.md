@@ -255,20 +255,3 @@ Generated files:
 
 
 **Chronological model leakage guard:** the historical win-probability model excludes the season-wide target percentile and season-baseline-filled recent run-rate/momentum features, because those were computed using all matches in a season and could indirectly expose future match information to earlier training rows. The outcome model uses only pre-delivery state variables plus match metadata available before play.
-
-## Final Selection Lab — pressure consistency
-
-The **Final Selection Lab** ranks repeatable high-pressure performance. It does not rank players by uplift over their own baseline.
-
-### Performance measures
-
-- **Batters:** runs per 100 balls faced in high-pressure chase deliveries. Wides are excluded from balls faced. Dismissals per 100 balls faced are displayed as a secondary indicator.
-- **Bowlers:** dot-ball percentage on known legal deliveries. Rows with unresolved bye/legbye run values are excluded from the dot-ball denominator. Credited wickets per 100 legal balls are displayed separately because wicket counts are sparse and volatile; economy is not reported until score reconstruction is resolved.
-- **Match consistency:** player performance is first aggregated within each high-pressure match. The system then calculates a recency- and exposure-weighted mean and standard deviation across matches.
-- **Reliability adjustment:** the mean is shrunk toward the role-wide high-pressure rate using a five-effective-match prior. The consistency score subtracts a configurable number of standard errors from that shrunk mean. This rewards players with strong performance that repeats across matches and penalizes volatility or low effective samples.
-- **Eligibility:** the default minimum is 100 measured pressure deliveries across at least 10 matches. The gates apply to the measured denominator (balls faced for batters; known legal deliveries for bowlers).
-- **Consensus:** the final order is the median percentile across four PI definitions: baseline, RRR-heavy, momentum-heavy and stakes-heavy. A candidate must qualify under at least three. Synthetic-trained XGBoost is displayed as a diagnostic but excluded from consensus.
-
-The dashboard supports no decay, 365-day, 540-day and 730-day half-lives, player-name search, method-level Top-10 and Top-20 overlap matrices, consensus rank movement, and Top-10 / Top-20 overlap across recency settings. The main sidebar's format and season filters define the player pool.
-
-**Interpretation guardrail:** these are descriptive pressure-performance consistency rankings, not proof of psychological clutch ability. The bowling primary metric is dot-ball percentage rather than economy because unresolved bye/legbye values remain in the source data.
