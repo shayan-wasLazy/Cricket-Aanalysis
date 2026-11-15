@@ -209,3 +209,46 @@ streamlit run dashboard/app.py
 ```
 
 Do **not** run `git clean -fdx` in this project: that command also deletes ignored files, including your local `dataset/` CSVs and generated analysis artifacts.
+
+
+## Recency-weighted performance experiments
+
+Recent performances are often more relevant to a current player-selection decision than older performances. The project therefore compares **no decay, 365-day, 540-day and 730-day exponential half-lives** instead of hard-coding a single recency assumption.
+
+For a match age of (a) days and half-life (H):
+
+```text
+recency_weight = 2 ** (-age_days / half_life_days)
+```
+
+At the half-life, a match receives half the weight of a match on the reference date. At twice the half-life, it receives one-quarter weight.
+
+### Player rankings
+
+For each pressure definition (PI baseline, three PI weight alternatives and synthetic-trained XGBoost), batters and bowlers receive an unweighted ranking plus 365d / 540d / 730d rankings.
+
+- The reference date is the newest valid match date in the supplied analysis data, making reruns deterministic.
+- Player eligibility still uses raw pressure deliveries and distinct matches (default: 100 deliveries and 10 matches). Recency does not let a small recent sample bypass these gates.
+- Batter performance is weighted runs per 100 pressure deliveries.
+- Bowler performance is weighted credited wickets per 100 pressure deliveries.
+- Weighted rates are shrunk toward the corresponding weighted role-wide rate using a fixed 100 weighted-delivery-equivalent prior.
+- The dashboard compares Top-10 membership overlap and rank movement across half-lives.
+
+### Historical match-outcome model
+
+The actual-outcome XGBoost benchmark is trained four times: unweighted, 365d, 540d and 730d. Its binary target is whether the second-innings batting side eventually won.
+
+- All experiments use the same chronological match-level train/test split.
+- Recency weights are calculated from the latest training match date only.
+- Recency weights are applied to training rows only; held-out test rows receive identical match-balanced evaluation weights for every model.
+- The 540-day model is saved as a provisional dashboard default. It is not assumed to be optimal.
+- Compare out-of-time Brier score and log loss (lower is better), ROC-AUC (higher is better), and calibration. These measure match-outcome prediction, not psychological pressure.
+
+Generated files:
+- `outputs/player_rankings.csv` — full unweighted and decayed player rankings.
+- `outputs/player_top10_comparison.csv` — eligible Top-10 rows across scoring methods and half-lives.
+- `outputs/historical_win_probability_recency_comparison.csv` — holdout metrics for all four outcome-model training schemes.
+- `outputs/metrics/historical_win_probability_metrics.json` — detailed metrics for the provisional 540-day model.
+- `models/historical_win_probability_xgb_540d.json` — provisional 540-day outcome model.
+
+**Interpretation:** recency can improve current relevance but can also increase variance by down-weighting older sample. Do not pick the half-life based only on a higher recent player rate. Consider out-of-time model performance, raw sample size, shrinkage and ranking stability together. The 540-day setting is a comparison candidate, not a proven winner.
