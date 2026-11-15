@@ -301,20 +301,47 @@ with tabs[4]:
                          key=lambda x: list(["PI baseline","PI RRR-heavy","PI momentum-heavy","PI stakes-heavy","XGBoost"]).index(x)
                          if x in ["PI baseline","PI RRR-heavy","PI momentum-heavy","PI stakes-heavy","XGBoost"] else 99)
         selected_methods = st.multiselect("Models to compare", methods, default=methods)
-        half_lives = ["unweighted", "365d", "540d", "730d"]
+        half_lives = ["unweighted", "180d", "365d", "540d", "730d"]
         selected_half_life = st.selectbox(
             "Recency setting",
             half_lives,
-            index=2,
-            format_func=lambda x: {"unweighted":"No decay", "365d":"365-day half-life",
-                                  "540d":"540-day half-life", "730d":"730-day half-life"}[x],
+            index=1,
+            format_func=lambda x: {
+                "unweighted":"No decay",
+                "180d":"180-day half-life (strong recency)",
+                "365d":"365-day half-life",
+                "540d":"540-day half-life",
+                "730d":"730-day half-life",
+            }[x],
+        )
+        activity_window = st.selectbox(
+            "Recent pressure activity",
+            ["365d", "730d", "All history"],
+            index=0,
+            format_func=lambda x: {
+                "365d":"Pressure appearance in last 365 days",
+                "730d":"Pressure appearance in last 730 days",
+                "All history":"No activity filter",
+            }[x],
+            help="Filters out players whose latest high-pressure appearance is too old for current selection.",
         )
         p = rankings.loc[
             rankings["role"].eq(role)
             & rankings["scoring_method"].isin(selected_methods)
             & rankings["half_life"].eq(selected_half_life)
         ].copy()
-        p["eligible_current"] = p["pressure_deliveries"].ge(min_deliveries) & p["pressure_matches"].ge(min_matches)
+        p["eligible_current"] = (
+            p["pressure_deliveries"].ge(min_deliveries)
+            & p["pressure_matches"].ge(min_matches)
+        )
+        if activity_window != "All history" and "days_since_last_pressure_match" in p:
+            max_age_days = 365 if activity_window == "365d" else 730
+            p["eligible_current"] &= p["days_since_last_pressure_match"].le(max_age_days)
+        reference_dates = rankings["recency_reference_date"].dropna().astype(str).unique()
+        if len(reference_dates):
+            st.caption(
+                f"Player recency is aged from **{reference_dates[0][:10]} UTC**, not from the newest match in the data pack."
+            )
         p["current_rank"] = np.nan
         for method, idx in p.loc[p["eligible_current"]].groupby("scoring_method").groups.items():
             p.loc[idx, "current_rank"] = p.loc[idx, "shrunk_per_100"].rank(method="min", ascending=False)
@@ -328,9 +355,33 @@ with tabs[4]:
         else:
             k2.metric("PI / XGB top-10 overlap", "—")
         k3.metric("Methods compared", f"{len(selected_methods)}")
-        st.dataframe(top[["scoring_method","role","current_rank","player_name","pressure_deliveries",
-                          "pressure_matches","observed_per_100","shrunk_per_100","eligible_current"]],
-                     use_container_width=True, hide_index=True)
+        show_columns = [
+            "scoring_method", "role", "current_rank", "player_name",
+            "pressure_deliveries", "pressure_matches",
+            "last_pressure_match_date", "days_since_last_pressure_match",
+            "recent_pressure_deliveries_365d", "observed_per_100",
+            "shrunk_per_100", "eligible_current",
+        ]
+        show_columns = [column for column in show_columns if column in top.columns]
+        st.dataframe(
+            top[show_columns].rename(columns={
+                "current_rank": "Rank",
+                "player_name": "Player",
+                "pressure_deliveries": "All-time pressure deliveries",
+                "pressure_matches": "All-time pressure matches",
+                "last_pressure_match_date": "Last pressure appearance",
+                "days_since_last_pressure_match": "Days since pressure appearance",
+                "recent_pressure_deliveries_365d": "Pressure deliveries in last 365d",
+                "observed_per_100": "Raw rate / 100",
+                "shrunk_per_100": "Recency-adjusted rate / 100",
+            }),
+            use_container_width=True, hide_index=True,
+        )
+        if p["eligible_current"].sum() == 0:
+            st.warning(
+                "No players pass the current activity window and sample gates. "
+                "Try the 730-day or All history activity filter, or check whether the dataset is current."
+            )
         if not top.empty:
             fig = px.bar(top, x="player_name", y="shrunk_per_100", color="scoring_method",
                          barmode="group", facet_col="scoring_method",
@@ -346,7 +397,7 @@ with tabs[4]:
 
 with tabs[7]:
     st.subheader("Recency weighting laboratory")
-    st.caption("A 365-day half-life halves the influence of a match one year old relative to the newest match in this dataset. The reference date is fixed to the latest valid match date in the dataset, so reruns are reproducible.")
+    st.caption("Player rankings now age observations from the current UTC date, so inactive players do not stay artificially recent when the source data pack is stale. The historical win-probability experiment continues to use its separate chronological training reference.")
     recency_table = data["outcome_recency"]
     if recency_table.empty:
         st.info("Recency comparison is not available. Run the latest python run_analysis.py.")
@@ -374,7 +425,7 @@ with tabs[7]:
     rankings = data["rankings"]
     if not rankings.empty:
         st.markdown("#### Player ranking stability")
-        st.caption("Each half-life uses the same high-pressure threshold and raw delivery/match eligibility gates. Only the contribution of older performances changes.")
+        st.caption("All player-ranking half-lives are anchored to the current UTC date. A 180-day half-life is the new recency-forward default; longer half-lives remain available for sensitivity checks.")
         role_for_stability = st.selectbox("Role for recency comparison", ["Batter","Bowler"], key="recency_role")
         methods_for_stability = sorted(rankings["scoring_method"].dropna().unique().tolist())
         method_for_stability = st.selectbox("Pressure definition", methods_for_stability, key="recency_method")
@@ -399,7 +450,7 @@ with tabs[7]:
                     rp.loc[idx, "shrunk_per_100"].rank(method="min", ascending=False)
                 )
             top_sets = {}
-            for half in ["unweighted","365d","540d","730d"]:
+            for half in ["unweighted","180d","365d","540d","730d"]:
                 top_sets[half] = set(
                     rp.loc[rp["half_life"].eq(half)]
                     .nsmallest(10, "rank_under_current_thresholds")["player_id"].dropna()
@@ -410,7 +461,7 @@ with tabs[7]:
                     "top10_overlap_vs_unweighted": len(top_sets["unweighted"] & top_sets[half]),
                     "eligible_players": int(rp.loc[rp["half_life"].eq(half), "player_id"].nunique()),
                 }
-                for half in ["unweighted","365d","540d","730d"]
+                for half in ["unweighted","180d","365d","540d","730d"]
             ])
             st.dataframe(overlap_df, use_container_width=True, hide_index=True)
             movement = rp.pivot_table(index=["player_id","player_name"], columns="half_life",
@@ -422,7 +473,7 @@ with tabs[7]:
     st.markdown("#### Recency-weight curve")
     age = np.arange(0, 4 * 365 + 1, 30)
     curve = pd.DataFrame({"age_days": age})
-    for half in [365,540,730]:
+    for half in [180,365,540,730]:
         curve[f"{half}-day half-life"] = np.power(2.0, -age / half)
     curve_long = curve.melt(id_vars="age_days", var_name="Half-life", value_name="Relative weight")
     fig = px.line(curve_long, x="age_days", y="Relative weight", color="Half-life",
