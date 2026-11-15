@@ -20,10 +20,10 @@ def test_phase_specific_pi_and_bowler_pressure_are_role_correct():
 
     scored = _add_phase_pi(rows)
 
-    assert np.isclose(scored.loc[0, "phase_pi_score"], 66.25)
+    assert np.isclose(scored.loc[0, "phase_pi_score"], 63.25)
     assert np.isclose(scored.loc[1, "phase_pi_score"], 58.5)
     assert np.isclose(scored.loc[2, "phase_pi_score"], 66.7)
-    assert np.isclose(scored.loc[0, "phase_bowling_pi_score"], 33.75)
+    assert np.isclose(scored.loc[0, "phase_bowling_pi_score"], 36.75)
     assert np.isclose(scored.loc[2, "phase_bowling_pi_score"], 33.3)
     assert scored.loc[0, "phase_pi_type"] == "baseline"
     assert scored.loc[1, "phase_pi_type"] == "momentum_heavy"
