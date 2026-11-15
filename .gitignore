@@ -4,3 +4,15 @@ __pycache__/
 .ipynb_checkpoints/
 .DS_Store
 Thumbs.db
+
+# Keep the dataset folder instructions in Git, but never commit competition CSVs.
+# Put your local data-pack CSVs in /dataset/.
+dataset/*
+!dataset/README.md
+!dataset/.gitkeep
+
+# Generated local outputs and trained artifacts
+data/processed/
+data/synthetic/
+outputs/
+models/
