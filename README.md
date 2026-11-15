@@ -187,3 +187,25 @@ Generated files:
 This outcome model is an independent empirical benchmark for game-state difficulty. It is **not** a psychological-pressure label and must not be directly interpreted as pressure.
 
 The synthetic confusion matrix is now saved in `outputs/metrics/experiment_metrics.json` and as `outputs/metrics/synthetic_xgb_confusion_matrix.csv`, fixing the previous dashboard display bug.
+
+
+## Pull future code updates without replacing your local dataset
+
+From your existing clone, first confirm the source CSV is ignored, then fast-forward to the latest code:
+
+```bash
+git status --short
+git check-ignore dataset/ball_by_ball.csv
+git pull --ff-only origin main
+```
+
+The `dataset/README.md` file is tracked, but all other files inside `dataset/` are ignored. Therefore your local source CSVs stay on your machine during a normal pull. Generated files under `outputs/`, `models/`, `data/processed/` and `data/synthetic/` are also ignored.
+
+After pulling new analysis code, regenerate outputs and relaunch the dashboard:
+
+```bash
+python run_analysis.py
+streamlit run dashboard/app.py
+```
+
+Do **not** run `git clean -fdx` in this project: that command also deletes ignored files, including your local `dataset/` CSVs and generated analysis artifacts.
