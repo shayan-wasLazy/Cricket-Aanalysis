@@ -7,7 +7,10 @@ import pandas as pd
 DEFAULT_MIN_DELIVERIES = 100
 DEFAULT_MIN_MATCHES = 10
 DEFAULT_PRIOR_DELIVERIES = 100
-RECENCY_HALF_LIVES_DAYS = (365, 540, 730)
+# 180 days gives recent form substantially more influence while retaining
+# longer half-lives for comparison.
+RECENCY_HALF_LIVES_DAYS = (180, 365, 540, 730)
+DEFAULT_PLAYER_RECENCY_HALF_LIFE = 180
 
 SCORE_METHODS = {
     "PI baseline": "pressure_index",
@@ -53,6 +56,7 @@ def _summarise_role(
     rows: pd.DataFrame,
     role: str,
     prior_deliveries: int,
+    reference_date: pd.Timestamp,
 ) -> pd.DataFrame:
     if rows.empty:
         return pd.DataFrame()
@@ -121,6 +125,27 @@ def _summarise_role(
         (grouped["weighted_deliveries"] + prior_deliveries)
     )
     grouped["performance_metric"] = metric_name
+    activity = d.copy()
+    activity["match_date"] = pd.to_datetime(activity["match_date"], errors="coerce", utc=True)
+    activity = activity.loc[activity["match_date"].notna()].copy()
+    if not activity.empty:
+        activity["is_recent_365d"] = activity["match_date"].ge(
+            reference_date - pd.Timedelta(days=365)
+        )
+        activity_summary = activity.groupby("player_id").agg(
+            last_pressure_match_date=("match_date", "max"),
+            recent_pressure_deliveries_365d=("is_recent_365d", "sum"),
+            recent_pressure_matches_365d=(
+                "match_id",
+                lambda s: s.loc[activity.loc[s.index, "is_recent_365d"]].nunique(),
+            ),
+        ).reset_index()
+        activity_summary["days_since_last_pressure_match"] = (
+            reference_date - activity_summary["last_pressure_match_date"]
+        ).dt.total_seconds() / 86400.0
+        grouped = grouped.merge(
+            activity_summary, on="player_id", how="left", validate="one_to_one"
+        )
     grouped["role"] = role
     return grouped
 
@@ -132,6 +157,7 @@ def build_player_rankings(
     prior_deliveries: int = DEFAULT_PRIOR_DELIVERIES,
     high_pressure_threshold: float = 60.0,
     half_lives_days: tuple[int, ...] = RECENCY_HALF_LIVES_DAYS,
+    reference_date: pd.Timestamp | str | None = None,
 ) -> pd.DataFrame:
     """Build unweighted and recency-weighted high-pressure player rankings.
 
@@ -140,8 +166,10 @@ def build_player_rankings(
     not the sample gate. Shrinkage uses a fixed pseudo-sample prior of
     prior_deliveries weighted delivery-equivalents.
 
-    The reference date is the newest valid match date in the supplied dataset,
-    not the machine's current date. This makes rankings reproducible.
+    The reference date defaults to the current UTC date, so old appearances
+    continue to age even when the data pack itself is stale. Pass reference_date
+    explicitly to reproduce a historical selection snapshot; it is recorded in
+    each output row.
     """
     if real.empty:
         return pd.DataFrame()
@@ -156,8 +184,12 @@ def build_player_rankings(
     parsed_dates = pd.to_datetime(real["match_date"], errors="coerce", utc=True)
     if parsed_dates.notna().sum() == 0:
         raise ValueError("Player recency weighting requires valid match_date values")
-    reference_date = parsed_dates.max()
-    date_reference = pd.Timestamp(reference_date).isoformat()
+    if reference_date is None:
+        reference = pd.Timestamp.now(tz="UTC").normalize()
+    else:
+        reference = pd.to_datetime(reference_date, errors="raise", utc=True)
+        reference = pd.Timestamp(reference).normalize()
+    date_reference = reference.isoformat()
 
     frames = []
     for method, score_col in SCORE_METHODS.items():
@@ -180,7 +212,7 @@ def build_player_rankings(
                 part["recency_weight"] = 1.0
             else:
                 age_days = (
-                    reference_date - part["match_date"]
+                    reference - part["match_date"]
                 ).dt.total_seconds() / 86400.0
                 part["recency_weight"] = np.power(
                     2.0, -age_days.clip(lower=0) / float(half_life_days)
@@ -189,7 +221,7 @@ def build_player_rankings(
                 part = part.loc[part["recency_weight"].notna()].copy()
 
             for role in ("Batter", "Bowler"):
-                summary = _summarise_role(part, role, prior_deliveries)
+                summary = _summarise_role(part, role, prior_deliveries, reference)
                 if summary.empty:
                     continue
                 summary["scoring_method"] = method
