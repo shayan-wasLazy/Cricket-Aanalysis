@@ -131,3 +131,59 @@ The first command should print the data path. The CSVs should not appear as untr
 - Add tournament standings and qualification rules to derive genuine must-win states.
 - Train a separate historical win-probability model on actual outcomes, grouped by match and evaluated chronologically.
 - Assess PI monotonicity, match/season stability, weight sensitivity and player-ranking stability before producing final rankings.
+
+
+## New validation workflows
+
+The current pipeline adds four analysis tracks beyond the original PI / synthetic-XGBoost comparison:
+
+### 1. Player sample gates, shrinkage and Top-10 comparison
+
+The default high-pressure definition is a score of at least 60. For each of the following scoring methods, the pipeline builds separate batter and bowler rankings:
+
+- PI baseline
+- RRR-heavy PI
+- Momentum-heavy PI
+- Stakes-heavy PI
+- Synthetic-trained XGBoost
+
+Initial eligibility is **at least 100 high-pressure deliveries across at least 10 matches**. Batters are ranked by runs per 100 pressure balls; bowlers by credited wickets per 100 pressure balls. Rates are shrunk toward the role-wide rate with a 100-delivery prior. These are high-pressure efficiency rankings, not yet pressure uplift versus each player's own normal baseline.
+
+Generated files:
+- `outputs/player_rankings.csv`
+- `outputs/player_top10_comparison.csv`
+
+The dashboard allows the minimum delivery and match thresholds to be changed interactively.
+
+### 2. Match-by-match disagreement review
+
+The pipeline exports:
+- `outputs/match_disagreement_summary.csv` — matches ranked by mean and maximum absolute PI/XGBoost score gap.
+- `outputs/delivery_disagreements.csv` — up to 500 delivery states with the largest score gaps.
+
+Use the dashboard's Match disagreement tab to inspect pressure trajectories within a selected match.
+
+### 3. Score reconstruction / innings audit
+
+Generated files:
+- `outputs/innings_validation.csv` — innings-level provisional totals, legal balls, unresolved extras, wicket counts and schedule checks.
+- `outputs/score_reconciliation_audit.csv` — match-level audit. Run-margin comparisons are attempted only for non-DLS run victories with no unresolved bye/legbye deliveries.
+
+The data pack does not include independent official innings totals, so this is a conservative internal/result-text audit, **not a complete official scorecard reconciliation**. Any unresolved extras keep affected matches provisional.
+
+### 4. Historical win-probability model
+
+A second XGBoost model is trained on the actual second-innings outcome: whether the batting team eventually won. It uses pre-delivery match-state features, excludes matches without a valid winner/team ID, and keeps every delivery from one match in the same chronological train or test partition. Match-balanced sample weights reduce the influence of matches with more deliveries.
+
+Metrics include match-weighted ROC-AUC, Brier score, baseline Brier score and log loss, plus a calibration table.
+
+Generated files:
+- `models/historical_win_probability_xgb.json`
+- `outputs/metrics/historical_win_probability_metrics.json`
+- `outputs/historical_win_probability_calibration.csv`
+- `outputs/historical_win_probability_feature_importance.csv`
+- `data/processed/historical_win_probability_predictions.csv.gz`
+
+This outcome model is an independent empirical benchmark for game-state difficulty. It is **not** a psychological-pressure label and must not be directly interpreted as pressure.
+
+The synthetic confusion matrix is now saved in `outputs/metrics/experiment_metrics.json` and as `outputs/metrics/synthetic_xgb_confusion_matrix.csv`, fixing the previous dashboard display bug.
