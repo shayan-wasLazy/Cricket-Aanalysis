@@ -289,11 +289,12 @@ def _role_phase_metrics(frame: pd.DataFrame, team: str, role: str, phase: str) -
             "matches": d["match_id"].nunique(),
         }
     team_mask = pd.Series(True, index=d.index) if team == "__OTHER_TEAMS__" else d["bowling_team"].eq(team)
-    d = d.loc[team_mask & d["is_legal_ball"]]
-    balls = len(d)
+    d = d.loc[team_mask]
+    legal = d["is_legal_ball"].fillna(False).astype(bool)
+    balls = int(legal.sum())
     conceded = d["runs_batter"] + d["wides"] + d["no_balls"]
     wickets = d["bowler_credited_wicket"].sum()
-    dots = conceded.eq(0).sum()
+    dots = (conceded.eq(0) & legal).sum()
     return {
         "balls": balls,
         "economy": 6 * conceded.sum() / balls if balls else np.nan,
@@ -347,15 +348,20 @@ def build_player_fit_shortlist(all_ipl: pd.DataFrame, phase_gaps: pd.DataFrame) 
                 d = d.loc[d["batter_ball_faced"]]
                 player_col, name_col = "batter_id", "batter"
                 d["metric_runs"] = d["runs_batter"]
+                d["metric_legal_delivery"] = 1
                 d["metric_wickets"] = d["dismissed_striker"].astype(int)
                 d["metric_dots"] = d["runs_batter"].eq(0).astype(int)
                 d["metric_boundaries"] = d["is_boundary_four"].astype(int) + d["is_boundary_six"].astype(int)
             else:
-                d = d.loc[d["is_legal_ball"]]
+                # Keep wides/no-balls so their runs are charged to the bowler.
+                # Legal-ball units remain the denominator for economy and rates.
                 player_col, name_col = "bowler_id", "bowler"
                 d["metric_runs"] = d["runs_batter"] + d["wides"] + d["no_balls"]
                 d["metric_wickets"] = d["bowler_credited_wicket"].astype(int)
-                d["metric_dots"] = d["metric_runs"].eq(0).astype(int)
+                d["metric_legal_delivery"] = d["is_legal_ball"].fillna(False).astype(int)
+                d["metric_dots"] = (
+                    d["metric_runs"].eq(0) & d["is_legal_ball"].fillna(False).astype(bool)
+                ).astype(int)
                 d["metric_boundaries"] = d["is_boundary_four"].astype(int) + d["is_boundary_six"].astype(int)
             if d.empty:
                 continue
@@ -363,14 +369,17 @@ def build_player_fit_shortlist(all_ipl: pd.DataFrame, phase_gaps: pd.DataFrame) 
             pressure_column = "is_high_pressure" if role == "Batter" else "is_bowling_high_pressure"
             d["pressure_flag"] = d[pressure_column].fillna(False).astype(bool)
             d["franchise"] = d["batting_team"] if role == "Batter" else d["bowling_team"]
+            d["pressure_delivery_unit"] = (
+                d["pressure_flag"].astype(int) * d["metric_legal_delivery"].astype(int)
+            )
             grouped = d.groupby(["player_id", name_col], dropna=False).agg(
-                deliveries=("match_id", "size"),
+                deliveries=("metric_legal_delivery", "sum"),
                 runs=("metric_runs", "sum"),
                 wickets=("metric_wickets", "sum"),
                 dots=("metric_dots", "sum"),
                 boundaries=("metric_boundaries", "sum"),
                 matches=("match_id", "nunique"),
-                pressure_deliveries=("pressure_flag", "sum"),
+                pressure_deliveries=("pressure_delivery_unit", "sum"),
                 pressure_runs=("metric_runs", lambda s: s[d.loc[s.index, "pressure_flag"]].sum()),
                 pressure_matches=("match_id", lambda s: s[d.loc[s.index, "pressure_flag"]].nunique()),
                 franchises=("franchise", lambda s: "; ".join(sorted(set(s.dropna().astype(str))))),
