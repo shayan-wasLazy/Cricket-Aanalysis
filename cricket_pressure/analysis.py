@@ -356,11 +356,10 @@ def _plot_extra_diagnostics(
             plt.close(fig)
 
 
-def _pakistan_player_ids(tables: dict[str, pd.DataFrame]) -> set[int]:
-    """Return player IDs mapped to the Pakistan national team in source metadata.
+def _excluded_national_team_player_ids(tables: dict[str, pd.DataFrame]) -> set[int]:
+    """Return player IDs mapped to Pakistan or Bangladesh national teams.
 
-    This affects candidate eligibility only; it does not remove deliveries from
-    match-state construction or alter other players' performance observations.
+    This is a candidate-eligibility filter only; source deliveries are retained.
     """
     teams = tables["teams"].copy()
     mapping = tables["player_mapping"].copy()
@@ -371,7 +370,7 @@ def _pakistan_player_ids(tables: dict[str, pd.DataFrame]) -> set[int]:
             if candidate in lookup:
                 return lookup[candidate]
         raise ValueError(
-            f"Cannot apply Pakistan player exclusion: {label} column not found. "
+            f"Cannot apply nationality exclusions: {label} column not found. "
             f"Available columns: {list(frame.columns)}"
         )
 
@@ -385,22 +384,28 @@ def _pakistan_player_ids(tables: dict[str, pd.DataFrame]) -> set[int]:
     )
 
     names = teams[team_name_col].fillna("").astype(str).str.strip().str.casefold()
-    pakistan_team_ids = set(
-        pd.to_numeric(
-            teams.loc[names.str.fullmatch(r"pakistan(?: men| national cricket team)?"),
-                      team_id_col],
-            errors="coerce",
-        ).dropna().astype(int)
+    excluded_names = names.str.fullmatch(
+        r"(?:pakistan|pakistan men|pakistan national cricket team|"
+        r"bangladesh|bangladesh men|bangladesh national cricket team)"
     )
-    if not pakistan_team_ids:
+    excluded_team_ids = set(
+        pd.to_numeric(teams.loc[excluded_names, team_id_col], errors="coerce")
+        .dropna().astype(int)
+    )
+    required = {"Pakistan", "Bangladesh"}
+    found = set(names.loc[excluded_names].map(
+        lambda name: "Pakistan" if name.startswith("pakistan") else "Bangladesh"
+    ))
+    missing = required - found
+    if missing:
         raise ValueError(
-            "Pakistan player exclusion is enabled, but no Pakistan national-team "
-            "record was found in teams.csv. Check the source team names."
+            "Nationality exclusions are enabled, but these national-team records "
+            f"were not found in teams.csv: {sorted(missing)}. Check source team names."
         )
 
     mapped_team_ids = pd.to_numeric(mapping[mapping_team_col], errors="coerce")
     player_ids = pd.to_numeric(
-        mapping.loc[mapped_team_ids.isin(pakistan_team_ids), mapping_player_col],
+        mapping.loc[mapped_team_ids.isin(excluded_team_ids), mapping_player_col],
         errors="coerce",
     ).dropna()
     return set(player_ids.astype(int))
@@ -467,7 +472,7 @@ def run_analysis(project_root: str | Path, n_synthetic: int = 40000, seed: int =
     player_rankings = build_player_rankings(real)
     # Apply shortlist eligibility after calculating metrics. Pakistani players
     # are excluded from submitted rankings; their deliveries remain in the data.
-    excluded_ids = _pakistan_player_ids(tables)
+    excluded_ids = _excluded_national_team_player_ids(tables)
     if not player_rankings.empty:
         player_rankings = player_rankings.loc[
             ~pd.to_numeric(player_rankings["player_id"], errors="coerce").isin(excluded_ids)
