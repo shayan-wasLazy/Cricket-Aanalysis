@@ -483,9 +483,4 @@ making definitive claims about pressure failures.
 
 ## Final ranking eligibility
 
-For the submitted IPL + T20I Top 10 lists, players mapped to the Pakistan national team in
-`teams.csv` and `competition_team_player_mapping.csv` are excluded from candidate rankings.
-The source deliveries are retained for match-state construction and for calculating other
-players' performance; only the candidate's own final ranking rows are removed. The analysis
-fails with a clear error if the source team metadata does not contain a Pakistan national-team
-record, rather than silently generating a list without applying the configured eligibility rule.
+For the submitted IPL + T20I Top 10 lists, players mapped to the Pakistan or Bangladesh national teams in `teams.csv` and `competition_team_player_mapping.csv` are excluded from candidate rankings. The source deliveries are retained for match-state construction and for calculating other players' performance; only the candidate's own final ranking rows are removed. The analysis fails with a clear error if either national-team record is missing from the source metadata, rather than silently generating a list without applying the configured eligibility rule.
