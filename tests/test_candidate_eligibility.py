@@ -15,7 +15,7 @@ def test_excluded_national_team_ids_uses_pakistan_and_bangladesh_mapping_only():
         }),
     }
 
-    assert _pakistan_player_ids(tables) == {101, 102, 103, 104}
+    assert _excluded_national_team_player_ids(tables) == {101, 102, 103, 104}
 
 
 def test_excluded_national_team_ids_fails_closed_if_metadata_missing():
@@ -25,8 +25,8 @@ def test_excluded_national_team_ids_fails_closed_if_metadata_missing():
     }
 
     try:
-        _pakistan_player_ids(tables)
+        _excluded_national_team_player_ids(tables)
     except ValueError as exc:
         assert "national-team records" in str(exc)
     else:
-        raise AssertionError("Expected missing Pakistan metadata to stop ranking generation")
+        raise AssertionError("Expected missing national-team metadata to stop ranking generation")
